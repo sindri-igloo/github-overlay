@@ -31,6 +31,19 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error { color: var(--red); font-size: 13px; margin-bottom: 8px; }
 
+.settings { border: 1px solid var(--border); border-radius: 6px; padding: 10px 14px; margin-bottom: 12px;
+  background: var(--bg-subtle); font-size: 13px; }
+.settings[hidden] { display: none; }
+.settings h2 { font-size: 14px; margin: 0 0 4px; }
+.settings-note { color: var(--fg-muted); font-size: 12px; margin: 0 0 6px; max-width: 760px; }
+.settings code { font-size: 11px; }
+.setting { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; cursor: pointer; }
+.setting input { margin: 3px 0 0; accent-color: var(--link); }
+.setting small { display: block; color: var(--fg-muted); font-size: 12px; }
+.setting.model { align-items: center; gap: 6px; cursor: default; }
+.setting select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 6px; }
+
 .bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 /* Tabs hang 1px over the bar's border; padding makes room for that inside the

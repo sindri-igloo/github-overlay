@@ -19,21 +19,22 @@ import (
 // claudeCLI runs the local Claude Code CLI for one-shot questions about PRs,
 // under the user's own Claude login.
 type claudeCLI struct {
-	bin, model string
-	dir        string // empty working directory, so no project files or CLAUDE.md get read
+	bin   string
+	model func() string // read per call, so a settings change applies to the next one
+	dir   string        // empty working directory, so no project files or CLAUDE.md get read
 }
 
 const claudeTimeout = 2 * time.Minute
 
-// newClaudeCLI returns nil, which turns the Claude features off, when bin is
-// empty or not installed.
-func newClaudeCLI(bin, model string) *claudeCLI {
+// newClaudeCLI returns nil, which makes the Claude features unavailable, when
+// bin is empty or not installed.
+func newClaudeCLI(bin string, model func() string) *claudeCLI {
 	if bin == "" {
 		return nil
 	}
 	path, err := exec.LookPath(bin)
 	if err != nil {
-		log.Printf("claude features off: %s not found", bin)
+		log.Printf("claude features unavailable: %s not found", bin)
 		return nil
 	}
 	c := &claudeCLI{bin: path, model: model}
@@ -50,7 +51,7 @@ func (c *claudeCLI) ask(system, input, schema string) (string, json.RawMessage, 
 	ctx, cancel := context.WithTimeout(context.Background(), claudeTimeout)
 	defer cancel()
 	// No tools, MCP servers, user settings or saved session: just the prompt.
-	args := []string{"-p", "--model", c.model, "--effort", "low",
+	args := []string{"-p", "--model", c.model(), "--effort", "low",
 		"--tools", "", "--strict-mcp-config", "--setting-sources", "project",
 		"--no-session-persistence", "--disable-slash-commands",
 		"--output-format", "json", "--system-prompt", system}

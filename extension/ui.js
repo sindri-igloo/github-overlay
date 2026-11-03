@@ -16,7 +16,9 @@ const TEMPLATE = `<div class="wrap">
     <span class="meta" id="meta"></span>
     <button class="iconbtn" id="split" title="Side by side" aria-pressed="false">⇆</button>
     <button class="iconbtn" id="refresh" title="Refresh now (r)">↻</button>
+    <button class="iconbtn" id="settings-btn" title="Settings" aria-expanded="false">⚙</button>
   </header>
+  <div class="settings" id="settings" hidden></div>
   <div id="error"></div>
   <div class="bar">
     <nav class="tabs" id="tabs"></nav>
@@ -887,6 +889,70 @@ function mount(root, opts = {}) {
     split = !split; store.set("split", split ? "1" : "0"); render(); motion.afterSwitch();
   });
   $("refresh").addEventListener("click", () => load(true));
+
+  // ---- Settings: the opt-in Claude features, saved by the server.
+
+  let settings = null;
+
+  async function toggleSettings() {
+    const panel = $("settings"), show = panel.hidden;
+    panel.hidden = !show;
+    $("settings-btn").setAttribute("aria-expanded", show);
+    if (!show) return;
+    panel.innerHTML = `<p class="settings-note">Loading settings…</p>`;
+    try {
+      const r = await api("/api/settings");
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      settings = body;
+      drawSettings();
+    } catch (e) {
+      panel.innerHTML = `<div class="error">⚠ Couldn't load settings: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function drawSettings(error = "") {
+    const s = settings, off = !s.claude ? "disabled" : "";
+    const toggle = (key, label, help) => `<label class="setting">
+        <input type="checkbox" data-setting="${key}" ${s[key] ? "checked" : ""} ${off}>
+        <span><b>${label}</b><small>${help}</small></span>
+      </label>`;
+    $("settings").innerHTML = `
+      <h2>Claude</h2>
+      <p class="settings-note">${s.claude
+        ? `Off unless you turn it on. Uses your Claude Code login (<code>${esc(s.claude)}</code>) in the background;
+           while on, the titles, branches and the start of the descriptions of your open PRs are sent to Anthropic.
+           Changes show within a minute.`
+        : `The Claude Code CLI wasn't found. Install it, log in, and restart the overlay server to use these.`}</p>
+      ${toggle("claudeGrouping", "Group related PRs", "Joins open PRs that belong to the same piece of work, even when they don't link to each other. Linked PRs always stay together.")}
+      ${toggle("claudeTitles", "Title groups", "Names each group after what it delivers instead of its scopes. Names you set by hand still win.")}
+      <label class="setting model">Model
+        <select data-setting="claudeModel" ${off}>${s.models.map(m =>
+          `<option ${m === s.claudeModel ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
+      </label>
+      ${error ? `<div class="error">⚠ ${esc(error)}</div>` : ""}`;
+  }
+
+  async function saveSetting(el) {
+    const next = { claudeGrouping: settings.claudeGrouping, claudeTitles: settings.claudeTitles, claudeModel: settings.claudeModel };
+    next[el.dataset.setting] = el.type === "checkbox" ? el.checked : el.value;
+    try {
+      const r = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      settings = body;
+      drawSettings();
+      load(); // turning a feature off applies at once
+    } catch (e) {
+      drawSettings(e.message);
+    }
+  }
+
+  $("settings-btn").addEventListener("click", toggleSettings);
+  $("settings").addEventListener("change", e => {
+    const el = evt(e).closest("[data-setting]");
+    if (el) saveSetting(el);
+  });
   $("list").addEventListener("click", e => {
     const n = evt(e).closest("[data-rename]");
     if (n) {
