@@ -74,7 +74,7 @@ function mount(root, opts = {}) {
     action:  { label: "Needs action", fn: p => ciFailed(p) || changesBy(p).length > 0 || p.humanThreads > 0 || p.conflicting || p.queued?.state === "UNMERGEABLE" },
     waiting: { label: "Waiting on review", fn: p => p.requestedReviewers.length > 0 },
     noRev:   { label: "No reviewer", fn: noReviewer },
-    ready:   { label: "Ready to merge", fn: p => p.reviewDecision === "APPROVED" && p.ci.state === "SUCCESS" && !p.conflicting && !p.humanThreads && !p.queued },
+    ready:   { label: "Ready to merge", fn: p => p.approved && p.ci.state === "SUCCESS" && !p.conflicting && !p.humanThreads && !p.queued },
     merging: { label: "Merging", fn: p => !!p.queued },
     drafts:  { label: "Drafts", fn: p => p.state === "DRAFT" },
   };
@@ -184,7 +184,7 @@ function mount(root, opts = {}) {
   // Queued where the base branch has a merge queue, merged otherwise. GitHub
   // still decides: it refuses when checks are missing or the PR conflicts.
   // Row features follow the section the row is drawn in, not the selected tab.
-  const canLand = (p, sid) => sid === "mine" && p.state === "OPEN" && p.reviewDecision === "APPROVED" && !p.queued;
+  const canLand = (p, sid) => sid === "mine" && p.state === "OPEN" && p.approved && !p.queued;
   const canRequest = (p, sid) => sid === "mine" && (p.state === "OPEN" || p.state === "DRAFT");
 
   function reviewCell(p, sid) {
