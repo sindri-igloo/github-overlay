@@ -21,11 +21,12 @@ proportionally.
 ## Install
 
 ```sh
-go install .            # puts github-overlay in $(go env GOPATH)/bin
+go install github.com/sindri-igloo/github-overlay@latest   # puts github-overlay in $(go env GOPATH)/bin
 ln -s "$(go env GOPATH)/bin/github-overlay" ~/.local/bin/   # if GOPATH/bin isn't on PATH
 ```
 
-Requires `gh auth login`.
+Requires `gh auth login`. For development, `go install .` from a checkout
+works too.
 
 ## Usage
 
@@ -37,6 +38,8 @@ github-overlay logs -f
 github-overlay restart -closed-days 14
 github-overlay stop
 github-overlay serve     # run in the foreground
+github-overlay update    # install the latest main from GitHub and restart the server
+github-overlay version
 ```
 
 Flags for `start`, `restart`, `open` and `serve`:
