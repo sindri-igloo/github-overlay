@@ -21,6 +21,14 @@ import (
 //go:embed index.html
 var indexHTML []byte
 
+// Shared with the browser extension, which loads them from its own folder.
+//
+//go:embed extension/ui.js
+var uiJS []byte
+
+//go:embed extension/ui.css
+var uiCSS []byte
+
 type server struct {
 	client     *client
 	bots       map[string]bool
@@ -229,6 +237,8 @@ func serve(o *serveOpts, pidFile bool) error {
 	mux.HandleFunc("GET /api/reviewers", guard(s.handleCandidates))
 	mux.HandleFunc("POST /api/reviewers", guard(s.handleSetReviewers))
 	mux.HandleFunc("PUT /api/groups", guard(s.handleSetGroup))
+	mux.HandleFunc("GET /ui.js", asset(uiJS, "text/javascript; charset=utf-8"))
+	mux.HandleFunc("GET /ui.css", asset(uiCSS, "text/css; charset=utf-8"))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
@@ -272,6 +282,13 @@ func serve(o *serveOpts, pidFile bool) error {
 	}
 	log.Printf("github-overlay stopped")
 	return nil
+}
+
+func asset(b []byte, contentType string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", contentType)
+		w.Write(b)
+	}
 }
 
 func main() {
