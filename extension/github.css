@@ -21,3 +21,5 @@
 /* GitHub gives the inbox the whole width beside its sidebar; use more of it
    than the standalone page does, so long titles stop truncating. */
 .on-github .wrap { max-width: 1600px; }
+
+.on-github .wrap.split { max-width: none; }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -284,6 +285,10 @@ func buildSnapshot(res *queryResult, bots map[string]bool) *Snapshot {
 			repos[strings.ToLower(r.Repository.NameWithOwner)] = true
 		}
 	}
+	// Search lags a merge by a minute or so, so the open searches can still
+	// return a PR that has just merged or closed. Its own state is current:
+	// move it to closed, where the page expects it.
+	var late []string
 	for name, nodes := range sections {
 		keys := []string{}
 		for _, r := range nodes {
@@ -292,9 +297,18 @@ func buildSnapshot(res *queryResult, bots map[string]bool) *Snapshot {
 			}
 			p := convert(r, bots, repos)
 			s.PRs[p.Key] = p
+			if name != "closed" && (p.State == "MERGED" || p.State == "CLOSED") {
+				late = append(late, p.Key)
+				continue
+			}
 			keys = append(keys, p.Key)
 		}
 		s.Sections[name] = keys
+	}
+	for _, k := range late {
+		if !slices.Contains(s.Sections["closed"], k) {
+			s.Sections["closed"] = append([]string{k}, s.Sections["closed"]...)
+		}
 	}
 
 	s.regroup(nil)

@@ -33,7 +33,9 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 
 .bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   border-bottom: 1px solid var(--border); margin-bottom: 12px; }
-.tabs { display: flex; overflow-x: auto; }
+/* Tabs hang 1px over the bar's border; padding makes room for that inside the
+   box, so the horizontal scroller never gets a 1px vertical scrollbar. */
+.tabs { display: flex; overflow-x: auto; overflow-y: hidden; padding-bottom: 1px; margin-bottom: -1px; }
 .tab { font: inherit; background: none; border: none; padding: 8px 12px; cursor: pointer; white-space: nowrap;
   color: var(--fg-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab:hover { color: var(--fg); }
@@ -53,10 +55,19 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .cols { padding: 0 12px 4px; font-size: 11px; color: var(--fg-muted); }
 .cols span:nth-child(n+3) { text-align: center; }
 .cols span:last-child { text-align: right; }
-.list { display: flex; flex-direction: column; gap: 12px; }
+.list, .cards { display: flex; flex-direction: column; gap: 12px; }
+/* Side by side: the columns stack once there's no room for two 620px rows. */
+.wrap.split { max-width: 2400px; }
+.list.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(620px, 100%), 1fr)); gap: 24px; align-items: start; }
+.wrap.split > .cols { display: none; } /* each column carries its own */
+.col { min-width: 0; }
+.colhead { font-size: 14px; font-weight: 600; margin: 0 0 8px; padding: 0 12px; }
+.iconbtn[aria-pressed=true] { background: var(--blue-bg); color: var(--link); }
 .card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .card > * + * { border-top: 1px solid var(--border-muted); }
 .empty { padding: 32px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--border); border-radius: 6px; }
+.empty button { font: inherit; color: var(--link); background: none; border: none; padding: 0; cursor: pointer; }
+.empty button:hover { text-decoration: underline; }
 
 .row { padding: 8px 12px; }
 .row:hover { background: var(--bg-subtle); }
@@ -159,7 +170,10 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .selbar[hidden] { display: none; }
 .selbar .sep { color: var(--gray); }
 .btn.small { font-size: 11px; padding: 0 6px; }
-.queued { color: var(--purple); }
+.queued { font-size: 11px; color: var(--purple); padding: 0 6px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 50%, transparent); }
+.queued.failed { color: var(--red); }
+.bundle-head.just-merged .name { cursor: default; }
 .btn.danger { color: #fff; background: var(--red); border-color: rgba(31,35,40,.15); }
 
 @media (max-width: 640px) {
