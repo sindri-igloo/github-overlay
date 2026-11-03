@@ -171,8 +171,28 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 	p.CI = CI{Failed: []Check{}, Pending: []Check{}}
 	if len(r.Commits.Nodes) > 0 {
 		if roll := r.Commits.Nodes[0].Commit.StatusCheckRollup; roll != nil {
-			p.CI.State = roll.State
-			for _, c := range roll.Contexts.Nodes {
+			// A commit keeps every run of a check, e.g. one cancelled when a
+			// newer run of its workflow started. Only the latest run counts.
+			nodes := roll.Contexts.Nodes
+			keys := make([]string, len(nodes))
+			latest := map[string]int{}
+			for i, c := range nodes {
+				if c.Typename != "CheckRun" {
+					continue
+				}
+				keys[i] = c.Name
+				if c.CheckSuite != nil && c.CheckSuite.WorkflowRun != nil {
+					keys[i] = c.CheckSuite.WorkflowRun.Workflow.Name + "/" + c.Name
+				}
+				// A queued run has no start time yet and is the newest.
+				if j, ok := latest[keys[i]]; !ok || c.StartedAt == "" || (nodes[j].StartedAt != "" && c.StartedAt > nodes[j].StartedAt) {
+					latest[keys[i]] = i
+				}
+			}
+			for i, c := range nodes {
+				if c.Typename == "CheckRun" && latest[keys[i]] != i {
+					continue
+				}
 				p.CI.Total++
 				switch c.Typename {
 				case "CheckRun":
@@ -193,6 +213,21 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 						p.CI.Failed = append(p.CI.Failed, ch)
 					}
 				}
+			}
+			// GitHub's rollup state counts superseded runs too, so derive it
+			// from the latest runs. A required check that hasn't reported yet
+			// only shows in the rollup state (PENDING or EXPECTED).
+			switch {
+			case p.CI.Total == 0:
+				p.CI.State = roll.State
+			case len(p.CI.Failed) > 0:
+				p.CI.State = "FAILURE"
+			case len(p.CI.Pending) > 0:
+				p.CI.State = "PENDING"
+			case roll.State == "PENDING" || roll.State == "EXPECTED":
+				p.CI.State = roll.State
+			default:
+				p.CI.State = "SUCCESS"
 			}
 		}
 	}
