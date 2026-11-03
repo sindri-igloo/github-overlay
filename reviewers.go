@@ -252,39 +252,72 @@ func (s *server) handleCandidates(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, cands)
 }
 
+type reviewChange struct {
+	PR     string      `json:"pr"`
+	Add    reviewerSet `json:"add"`
+	Remove reviewerSet `json:"remove"`
+}
+
+type reviewResult struct {
+	Key     string   `json:"key"`
+	PR      *PR      `json:"pr"` // null when the change failed or the PR left the snapshot
+	Ignored []string `json:"ignored"`
+	Error   string   `json:"error,omitempty"`
+}
+
+// maxReviewChanges bounds one request; each change costs a few API calls.
+const maxReviewChanges = 50
+
+// handleSetReviewers applies many PRs' changes in one request so the page
+// triggers a single refresh instead of one per PR. A failure on one PR lands in
+// its result and does not stop the rest.
 func (s *server) handleSetReviewers(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PR     string      `json:"pr"`
-		Add    reviewerSet `json:"add"`
-		Remove reviewerSet `json:"remove"`
+		Changes []reviewChange `json:"changes"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, err, http.StatusBadRequest)
 		return
 	}
-	pr, err := parsePRKey(req.PR)
-	if err != nil {
-		httpError(w, err, http.StatusBadRequest)
-		return
-	}
-	requested, ignored, err := s.client.setReviewers(pr, req.Add, req.Remove)
-	if err != nil {
-		httpError(w, err, http.StatusBadGateway)
+	if n := len(req.Changes); n == 0 || n > maxReviewChanges {
+		httpError(w, fmt.Errorf("changes must hold 1 to %d items, got %d", maxReviewChanges, n), http.StatusBadRequest)
 		return
 	}
 
-	// Reflect the change right away; the next poll brings in the rest.
-	key := strings.ToLower(req.PR)
-	s.mu.Lock()
-	var updated PR
-	if p := s.snap.PRs[key]; p != nil {
-		p.RequestedReviewers = requested
-		updated = *p
-	}
-	s.mu.Unlock()
-	go s.refresh(0)
+	results := make([]reviewResult, 0, len(req.Changes))
+	anyOK := false
+	for _, ch := range req.Changes {
+		res := reviewResult{Key: ch.PR, Ignored: []string{}}
+		pr, err := parsePRKey(ch.PR)
+		if err != nil {
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+		requested, ignored, err := s.client.setReviewers(pr, ch.Add, ch.Remove)
+		if err != nil {
+			res.Error = err.Error()
+			results = append(results, res)
+			continue
+		}
+		anyOK = true
+		res.Ignored = nonNil(ignored)
 
-	writeJSON(w, map[string]any{"pr": updated, "ignored": nonNil(ignored)})
+		// Reflect the change right away; the next poll brings in the rest.
+		s.mu.Lock()
+		if p := s.snap.PRs[strings.ToLower(ch.PR)]; p != nil {
+			p.RequestedReviewers = requested
+			updated := *p
+			res.PR = &updated
+		}
+		s.mu.Unlock()
+		results = append(results, res)
+	}
+	if anyOK {
+		go s.refresh(0)
+	}
+
+	writeJSON(w, map[string]any{"results": results})
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

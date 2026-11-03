@@ -26,6 +26,7 @@ body { margin: 0; background: var(--bg); color: var(--fg);
 a { color: inherit; text-decoration: none; }
 svg { display: block; }
 .wrap { max-width: 1100px; margin: 0 auto; padding: 16px; }
+.wrap.hasbar { padding-bottom: 104px; } /* room for the selection bar */
 
 header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 header h1 { font-size: 18px; margin: 0; font-weight: 600; }
@@ -52,6 +53,9 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .chip.active { background: var(--blue-bg); color: var(--link); }
 
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 104px 48px 40px; gap: 0 12px; align-items: center; }
+.sel .cols, .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) 24px 104px 48px 40px; }
+.cols .selcol { display: none; } .sel .cols .selcol { display: block; }
+.rowsel { margin: 0; accent-color: var(--link); cursor: pointer; }
 .cols { padding: 0 12px 4px; font-size: 11px; color: var(--fg-muted); }
 .cols span:nth-child(n+3) { text-align: center; }
 .cols span:last-child { text-align: right; }
@@ -70,6 +74,7 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .bundle-head .toggle { margin-left: auto; font: inherit; font-weight: 400; color: var(--purple); background: none;
   border: none; padding: 0 2px; cursor: pointer; }
 .bundle-head .toggle:hover { text-decoration: underline; }
+.bundle-head .toggle ~ .toggle { margin-left: 8px; }
 .row.done { background: var(--bg-subtle); }
 .row.done .title { font-weight: 400; color: var(--fg-muted); }
 
@@ -138,10 +143,24 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   color: var(--fg); background: var(--bg-subtle); border: 1px solid var(--border); }
 .btn.primary { color: #fff; background: #1f883d; border-color: rgba(31,35,40,.15); }
 .btn:disabled { opacity: .5; cursor: default; }
+.picker-report { padding: 6px 10px; border-top: 1px solid var(--border-muted); max-height: 120px; overflow-y: auto;
+  font-size: 12px; color: var(--fg-muted); }
+.picker-report .err { color: var(--red); }
+.picker-report div + div { margin-top: 2px; }
+
+.selbar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 9; max-width: calc(100vw - 32px);
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; font-size: 13px;
+  padding: 8px 12px calc(8px + env(safe-area-inset-bottom, 0px)); background: var(--bg);
+  border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.selbar[hidden] { display: none; }
+.selbar .sep { color: var(--gray); }
 
 @media (max-width: 640px) {
   .cols { display: none; }
   .row { grid-template-columns: 16px minmax(0, 1fr) auto auto; row-gap: 4px; }
+  .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) auto auto; row-gap: 4px; }
+  .sel .row .cell.ci { grid-column: 4; }
+  .sel .row .cell.rev { grid-column: 3; }
   .row .cell.ci { grid-column: 3; grid-row: 1; }
   .row .cell.rev { grid-column: 2; justify-content: flex-start; }
   .row .cell.thr, .row .cell.age { grid-row: 2; }
@@ -161,9 +180,10 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
     <nav class="tabs" id="tabs"></nav>
     <div class="filters" id="filters"></div>
   </div>
-  <div class="cols"><span></span><span></span><span title="CI">CI</span><span>Reviews</span><span title="Unresolved threads">Threads</span><span>Age</span></div>
+  <div class="cols"><span class="selcol"></span><span></span><span></span><span title="CI">CI</span><span>Reviews</span><span title="Unresolved threads">Threads</span><span>Age</span></div>
   <div class="list" id="list"><div class="empty">Loading pull requests…</div></div>
 </div>
+<div class="selbar" id="selbar" hidden></div>
 <script>
 const TABS = [
   { id: "mine", label: "Mine" },
@@ -194,6 +214,8 @@ const store = {
 
 let data = null;
 const expanded = new Set(); // bundles whose merged/closed PRs are unfolded
+const selectedPRs = new Set(); // Mine-tab rows ticked for a bulk reviewer request
+let shownSel = new Set(); // requestable PRs currently rendered
 let tab = store.get("tab", "mine");
 let filter = store.get("filter", "all");
 if (!TABS.some(t => t.id === tab)) tab = "mine";
@@ -283,7 +305,7 @@ function reviewCell(p) {
     inner = `<span class="none">none</span>`;
   }
   if (!canRequest(p)) return inner;
-  const open = picker && picker.key === p.key ? " open" : "";
+  const open = picker && !picker.bulk && picker.key === p.key ? " open" : "";
   return `<button class="revbtn${open}" data-reviewers="${esc(p.key)}" title="Request reviewers">${inner}<span class="plus">+</span></button>`;
 }
 
@@ -307,8 +329,12 @@ function row(p, bundleMembers) {
     return `<a href="${esc(t.url)}" target="_blank">${esc(repoLabel(t.repo))} #${t.number}</a> ${t.state.toLowerCase()}`;
   }).join(", ")}</span>`);
   const when = isDone(p) ? p.closedAt : p.updatedAt;
+  // Rows that can't be requested get an empty cell so the columns line up.
+  const pick = tab !== "mine" ? "" : canRequest(p)
+    ? `<span><input type="checkbox" class="rowsel" data-sel="${esc(p.key)}" ${selectedPRs.has(p.key) ? "checked" : ""} aria-label="Select ${esc(repoLabel(p.repo))} #${p.number}"></span>`
+    : `<span></span>`;
   return `<div class="row${isDone(p) && tab !== "closed" ? " done" : ""}">
-    <span title="${p.state.toLowerCase()}">${svg(P[p.state] || P.OPEN, STATE_COLOR[p.state])}</span>
+    ${pick}<span title="${p.state.toLowerCase()}">${svg(P[p.state] || P.OPEN, STATE_COLOR[p.state])}</span>
     <div style="min-width:0">
       <a class="title" href="${esc(p.url)}" target="_blank" title="${esc(p.title + "\n" + p.head + " → " + p.base)}">${esc(p.title)}</a>
       <div class="sub">${sub.join("")}</div>
@@ -352,6 +378,10 @@ function render() {
   }).join("") : "";
 
   const shown = prs.filter(useFilters ? FILTERS[filter].fn : () => true);
+  // Only requestable rows that are on screen can stay selected.
+  shownSel = new Set(shown.filter(canRequest).map(p => p.key));
+  for (const k of [...selectedPRs]) if (!shownSel.has(k)) selectedPRs.delete(k);
+  document.body.classList.toggle("sel", tab === "mine");
 
   // Unconnected PRs share one card at the top; each bundle follows in its
   // own card. Both keep the section's order (most recently updated first).
@@ -374,13 +404,28 @@ function render() {
     const open = expanded.has(gid);
     const hidden = all.size - members.length - finished.length;
     const counts = tab === "closed" ? `${all.size} PRs` : `${all.size - finished.length} open`;
-    const toggle = finished.length
-      ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "";
+    const reqKeys = members.filter(canRequest).map(q => q.key);
+    const pickAll = reqKeys.length
+      ? `<button class="toggle" data-selkeys="${esc(reqKeys.join(","))}">${reqKeys.every(k => selectedPRs.has(k)) ? "Unselect" : "Select"}</button>` : "";
+    const toggle = pickAll + (finished.length
+      ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "");
     const rows = members.map(q => row(q, all)).join("") + (open ? finished.map(q => row(q, all)).join("") : "");
     bundles.push(`<div class="card bundle"><div class="bundle-head">${svg(P.link, "currentColor", 12)}Connected<span class="n">${counts}${hidden ? `, ${hidden} not shown` : ""}</span>${toggle}</div>${rows}</div>`);
   }
   const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
   document.getElementById("list").innerHTML = cards.join("") || `<div class="empty">Nothing here.</div>`;
+  renderSelbar();
+}
+
+function renderSelbar() {
+  const n = selectedPRs.size, bar = document.getElementById("selbar");
+  document.querySelector(".wrap").classList.toggle("hasbar", n > 0);
+  bar.hidden = !n;
+  if (!n) { bar.innerHTML = ""; return; }
+  bar.innerHTML = `<span>${n} PR${n === 1 ? "" : "s"} selected</span><span class="sep">·</span>
+    <button class="btn" data-bar="all">Select all shown</button>
+    <button class="btn" data-bar="clear">Clear</button>
+    <button class="btn primary" data-bar="request" data-bulk>Request reviewers…</button>`;
 }
 
 // The server rejects API calls without this header (see guard in main.go).
@@ -390,7 +435,9 @@ function api(path, opts = {}) {
 
 // ---- Reviewer picker
 
-let picker = null; // { key, el, initial: Set, selected: Set, cands, query, busy, error }
+// { key, el, initial: Set, selected: Set, cands, query, busy, error }; a bulk picker
+// (add-only, over selectedPRs) has bulk: true, keys, candsBy and loading instead.
+let picker = null;
 const candCache = {};
 
 function closePicker() {
@@ -401,7 +448,7 @@ function closePicker() {
 }
 
 async function openPicker(key, anchor) {
-  if (picker) { const same = picker.key === key; closePicker(); if (same) return; }
+  if (picker) { const same = !picker.bulk && picker.key === key; closePicker(); if (same) return; }
   const p = data.prs[key];
   const current = new Set(p.requestedReviewers.map(lc));
   const el = document.createElement("div");
@@ -426,6 +473,15 @@ async function openPicker(key, anchor) {
 }
 
 function positionPicker() {
+  if (picker.bulk) {
+    // Opens upward from the selection bar's button.
+    const doc = document.documentElement;
+    const r = document.querySelector("[data-bulk]")?.getBoundingClientRect() ?? { right: doc.clientWidth - 16, top: doc.clientHeight - 16 };
+    const w = picker.el.offsetWidth, h = picker.el.offsetHeight;
+    picker.el.style.left = Math.max(16, Math.min(r.right - w, doc.clientWidth - w - 16)) + window.scrollX + "px";
+    picker.el.style.top = Math.max(window.scrollY + 8, r.top + window.scrollY - h - 4) + "px";
+    return;
+  }
   const btn = document.querySelector(`[data-reviewers="${CSS.escape(picker.key)}"]`) || picker.anchor;
   const r = btn.getBoundingClientRect();
   const w = picker.el.offsetWidth;
@@ -442,47 +498,55 @@ function pickerChanges() {
 }
 
 function drawPicker(focus) {
-  const { key, cands, selected, query, busy, error } = picker;
-  const p = data.prs[key];
-  const reviewed = Object.fromEntries(humanReviews(p).map(r => [lc(r.login), r.state]));
+  const { bulk, key, cands, selected, query, busy, error } = picker;
+  const p = bulk ? null : data.prs[key];
+  const reviewed = bulk ? {} : Object.fromEntries(humanReviews(p).map(r => [lc(r.login), r.state]));
+  // Bulk: show "requested" when everyone selected already has this reviewer, or
+  // how many PRs a candidate applies to when not all of them.
+  const bulkHint = (id, c) => {
+    const ps = picker.keys.map(k => data.prs[k]).filter(Boolean);
+    if (ps.length && ps.every(x => x.requestedReviewers.map(lc).some(r => r === id))) return "requested";
+    return c.n < picker.loaded ? `${c.n} of ${picker.loaded} PRs` : "";
+  };
   const q = lc(query.trim());
   const match = c => !q || lc(c.login).includes(q) || lc(c.name || "").includes(q);
 
   // Selected entries may not be in the candidate list (e.g. a team the token
   // can't list); keep them visible so they can be removed.
   const known = new Set();
-  const opt = (id, login, name, hint) => {
+  const opt = (id, login, name, hint, text = hint ? REVIEW_TEXT[hint] : "") => {
     known.add(id);
     const kind = hint ? REVIEW_CLASS[hint] : "";
     return `<label class="opt">
       <input type="checkbox" data-id="${esc(id)}" ${selected.has(id) ? "checked" : ""} ${busy ? "disabled" : ""}>
       ${avatar(login)}
       <span class="who">${esc(login.replace(/^@/, ""))}${name ? `<small>${esc(name)}</small>` : ""}</span>
-      <span class="hint ${kind}">${hint ? REVIEW_TEXT[hint] : ""}</span>
+      <span class="hint ${kind}">${esc(text)}</span>
     </label>`;
   };
 
   let list;
   if (!cands) {
-    list = `<div class="picker-empty">${error ? "" : "Loading reviewers…"}</div>`;
+    list = `<div class="picker-empty">${picker.loading || (!bulk && !error) ? "Loading reviewers…" : ""}</div>`;
   } else {
     const users = cands.users.filter(match);
     const teams = cands.teams.filter(match);
     const groups = [
-      ["Suggested", users.filter(u => u.suggested).map(u => opt(lc(u.login), u.login, u.name, reviewed[lc(u.login)]))],
-      ["People", users.filter(u => !u.suggested).map(u => opt(lc(u.login), u.login, u.name, reviewed[lc(u.login)]))],
-      ["Teams", teams.map(t => opt("@" + lc(t.login), "@" + t.login, t.name))],
+      ["Suggested", users.filter(u => u.suggested).map(u => opt(lc(u.login), u.login, u.name, reviewed[lc(u.login)], bulk ? bulkHint(lc(u.login), u) : undefined))],
+      ["People", users.filter(u => !u.suggested).map(u => opt(lc(u.login), u.login, u.name, reviewed[lc(u.login)], bulk ? bulkHint(lc(u.login), u) : undefined))],
+      ["Teams", teams.map(t => opt("@" + lc(t.login), "@" + t.login, t.name, null, bulk ? bulkHint("@" + lc(t.login), t) : undefined))],
     ].filter(([, items]) => items.length);
     list = groups.map(([label, items]) => `<div class="picker-group">${label}</div>${items.join("")}`).join("")
       || `<div class="picker-empty">No one matches “${esc(query)}”.</div>`;
   }
-  const orphans = [...selected].filter(id => cands && !known.has(id) && (!q || id.includes(q)));
+  const orphans = bulk ? [] : [...selected].filter(id => cands && !known.has(id) && (!q || id.includes(q)));
   if (orphans.length) list = `<div class="picker-group">Requested</div>${orphans.map(id => opt(id, id, "", null)).join("")}` + list;
 
   const pills = [...selected].map(id =>
     `<span class="pill">${esc(id)}<button data-unpick="${esc(id)}" aria-label="Remove ${esc(id)}" ${busy ? "disabled" : ""}>×</button></span>`).join("");
-  const ch = pickerChanges();
-  const status = error ? `<span class="status err">${esc(error)}</span>`
+  const ch = bulk ? { add: [...selected], remove: [], count: selected.size } : pickerChanges();
+  const status = bulk ? (error ? `<span class="status err">${esc(error)}</span>` : busy ? `<span class="status">Requesting…</span>` : `<span class="status">${selected.size} selected</span>`)
+    : error ? `<span class="status err">${esc(error)}</span>`
     : busy ? `<span class="status">Saving…</span>`
     : `<span class="status">${ch.count ? `${ch.add.length ? "+" + ch.add.length : ""}${ch.add.length && ch.remove.length ? " " : ""}${ch.remove.length ? "−" + ch.remove.length : ""}` : `${selected.size} selected`}</span>`;
 
@@ -491,14 +555,15 @@ function drawPicker(focus) {
   const hadFocus = document.activeElement && picker.el.contains(document.activeElement) ? document.activeElement.dataset.id || "search" : null;
   picker.el.innerHTML = `
     <div class="picker-head">
-      <b>Request reviewers <span class="pr">${esc(repoLabel(p.repo))} #${p.number}</span></b>
+      <b>Request reviewers <span class="pr">${bulk ? `on ${picker.keys.length} PR${picker.keys.length === 1 ? "" : "s"}` : `${esc(repoLabel(p.repo))} #${p.number}`}</span></b>
       <div class="pills">${pills}</div>
       <input type="search" placeholder="Filter people and teams" value="${esc(query)}" aria-label="Filter reviewers">
     </div>
     <div class="picker-list">${list}</div>
+    ${picker.report?.length ? `<div class="picker-report">${picker.report.map(l => `<div${l.err ? ' class="err"' : ""}>${esc(l.text)}</div>`).join("")}</div>` : ""}
     <div class="picker-foot">${status}
       <button class="btn" data-act="cancel">Cancel</button>
-      <button class="btn primary" data-act="apply" ${ch.count && !busy ? "" : "disabled"}>Update</button>
+      <button class="btn primary" data-act="apply" ${ch.count && !busy && !picker.loading ? "" : "disabled"}>${bulk ? "Request" : "Update"}</button>
     </div>`;
   picker.el.querySelector(".picker-list").scrollTop = scroll;
   const input = picker.el.querySelector("input[type=search]");
@@ -508,6 +573,7 @@ function drawPicker(focus) {
 }
 
 async function applyPicker() {
+  if (picker.bulk) return applyBulk();
   const ch = pickerChanges();
   if (!ch.count || picker.busy) return;
   const split = ids => ({ users: ids.filter(i => !i.startsWith("@")), teams: ids.filter(i => i.startsWith("@")).map(i => i.slice(1)) });
@@ -521,15 +587,17 @@ async function applyPicker() {
   picker.busy = true; picker.error = ""; drawPicker();
   try {
     const r = await api("/api/reviewers", { method: "POST",
-      body: JSON.stringify({ pr: key, add: split(ch.add.map(cased)), remove: split(ch.remove.map(cased)) }) });
+      body: JSON.stringify({ changes: [{ pr: key, add: split(ch.add.map(cased)), remove: split(ch.remove.map(cased)) }] }) });
     const body = await r.json();
     if (!r.ok) throw new Error(body.error || r.statusText);
-    if (data.prs[key] && body.pr.key) data.prs[key] = body.pr;
-    if (body.ignored.length) {
+    const res = body.results[0];
+    if (res.error) throw new Error(res.error);
+    if (data.prs[key] && res.pr) data.prs[key] = res.pr;
+    if (res.ignored.length) {
       // GitHub accepted the call but skipped these; stay open and say so.
-      const now = new Set(body.pr.requestedReviewers.map(lc));
+      const now = new Set((res.pr || data.prs[key]).requestedReviewers.map(lc));
       Object.assign(picker, { busy: false, initial: now, selected: new Set(now),
-        error: `GitHub skipped ${body.ignored.join(", ")}. They may lack access to this repo.` });
+        error: `GitHub skipped ${res.ignored.join(", ")}. They may lack access to this repo.` });
       render(); drawPicker();
       return;
     }
@@ -539,9 +607,122 @@ async function applyPicker() {
   }
 }
 
+const prName = (p, key) => p ? repoLabel(p.repo) + " #" + p.number : key;
+
+// Union of the selected PRs' candidates. n counts the PRs a candidate is valid for.
+function bulkCands() {
+  const users = new Map(), teams = new Map();
+  let loaded = 0;
+  for (const k of picker.keys) {
+    const c = picker.candsBy[k];
+    if (!c) continue;
+    loaded++;
+    for (const [map, list] of [[users, c.users], [teams, c.teams]]) for (const x of list) {
+      const e = map.get(lc(x.login));
+      if (e) { e.n++; e.suggested ||= x.suggested; e.name ||= x.name; }
+      else map.set(lc(x.login), { ...x, n: 1 });
+    }
+  }
+  picker.loaded = loaded;
+  const byLogin = (a, b) => lc(a.login).localeCompare(lc(b.login));
+  return loaded ? { users: [...users.values()].sort(byLogin), teams: [...teams.values()].sort(byLogin) } : null;
+}
+
+async function openBulk(anchor) {
+  if (picker) { const same = picker.bulk; closePicker(); if (same) return; }
+  const keys = [...selectedPRs].filter(k => data.prs[k]);
+  if (!keys.length) return;
+  const el = document.createElement("div");
+  el.className = "picker";
+  el.setAttribute("role", "dialog");
+  el.setAttribute("aria-label", "Request reviewers");
+  document.body.appendChild(el);
+  const me = picker = { bulk: true, keys, key: keys[0], el, anchor, initial: new Set(), selected: new Set(), candsBy: {}, loaded: 0,
+    cands: null, loading: true, query: "", busy: false, error: "", report: [] };
+  drawPicker(true);
+  const failed = [];
+  await Promise.all(keys.map(async key => {
+    try {
+      if (!candCache[key]) {
+        const r = await api("/api/reviewers?pr=" + encodeURIComponent(key));
+        const body = await r.json();
+        if (!r.ok) throw new Error(body.error || r.statusText);
+        candCache[key] = body;
+      }
+      me.candsBy[key] = candCache[key];
+    } catch (e) { failed.push(`${prName(data.prs[key], key)}: ${e.message}`); }
+  }));
+  if (picker !== me) return;
+  me.loading = false;
+  me.cands = bulkCands();
+  if (failed.length) me.error = `Couldn't load reviewers for ${failed.join("; ")}`;
+  drawPicker();
+}
+
+async function applyBulk() {
+  if (picker.busy || picker.loading || !picker.selected.size) return;
+  const me = picker, report = [], changes = [];
+  const split = ids => ({ users: ids.filter(i => !i.startsWith("@")), teams: ids.filter(i => i.startsWith("@")).map(i => i.slice(1)) });
+  for (const key of me.keys) {
+    const p = data.prs[key], c = me.candsBy[key];
+    if (!p) continue;
+    if (!c) { report.push({ text: `skipped ${prName(p)} (reviewers not loaded)`, err: true }); continue; }
+    // Send each id with its original casing, and only the ones this PR accepts.
+    const users = new Map(c.users.map(u => [lc(u.login), u.login])), teams = new Map(c.teams.map(t => ["@" + lc(t.login), "@" + t.login]));
+    const ids = [], noUser = [], noTeam = [];
+    for (const id of me.selected) {
+      const hit = (id.startsWith("@") ? teams : users).get(id);
+      if (hit) ids.push(hit); else (id.startsWith("@") ? noTeam : noUser).push(id);
+    }
+    if (noUser.length) report.push({ text: `skipped ${noUser.join(", ")} on ${prName(p)} (not a collaborator)`, err: false });
+    if (noTeam.length) report.push({ text: `skipped ${noTeam.join(", ")} on ${prName(p)} (team not available)`, err: false });
+    if (ids.length) changes.push({ pr: key, add: split(ids), remove: { users: [], teams: [] } });
+  }
+  me.busy = true; me.error = ""; me.report = []; drawPicker();
+  try {
+    if (changes.length) {
+      const r = await api("/api/reviewers", { method: "POST", body: JSON.stringify({ changes }) });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      body.results.forEach((res, i) => {
+        const key = changes[i].pr, p = data.prs[key];
+        if (res.error) { report.push({ text: `${prName(p, key)}: ${res.error}`, err: true }); return; }
+        if (res.pr && p) data.prs[key] = res.pr;
+        selectedPRs.delete(key); // done; a retry only hits the failures
+        if (res.ignored.length) report.push({ text: `${prName(p, key)}: GitHub skipped ${res.ignored.join(", ")}`, err: true });
+      });
+    }
+    if (!report.length) { selectedPRs.clear(); if (picker === me) closePicker(); else render(); return; }
+    if (picker !== me) { render(); return; }
+    me.keys = me.keys.filter(k => selectedPRs.has(k));
+    Object.assign(me, { busy: false, report, selected: new Set(), query: "" });
+    me.cands = bulkCands();
+    render(); drawPicker();
+  } catch (e) {
+    if (picker === me) { me.busy = false; me.error = e.message; drawPicker(); }
+  }
+}
+
+// Row checkboxes, bundle Select buttons and the selection bar.
+function changeSelection(el) {
+  const d = el.dataset;
+  if (d.sel) el.checked ? selectedPRs.add(d.sel) : selectedPRs.delete(d.sel);
+  else if (d.selkeys) {
+    const keys = d.selkeys.split(","), all = keys.every(k => selectedPRs.has(k));
+    keys.forEach(k => all ? selectedPRs.delete(k) : selectedPRs.add(k));
+  } else if (d.bar === "all") shownSel.forEach(k => selectedPRs.add(k));
+  else if (d.bar === "clear") selectedPRs.clear();
+  // Clicking outside closes the picker, as anywhere else; closing also redraws.
+  picker ? closePicker() : render();
+}
+
 document.addEventListener("click", e => {
   const btn = e.target.closest("[data-reviewers]");
   if (btn) { openPicker(btn.dataset.reviewers, btn); return; }
+  const bar = e.target.closest("[data-bar=request]");
+  if (bar) { openBulk(bar); return; }
+  const sel = e.target.closest("[data-sel], [data-selkeys], [data-bar]");
+  if (sel) { changeSelection(sel); return; }
   if (!picker) return;
   if (!picker.el.contains(e.target)) { closePicker(); return; }
   const act = e.target.closest("[data-act]")?.dataset.act;
@@ -593,6 +774,7 @@ async function load(force) {
 
 document.getElementById("tabs").addEventListener("click", e => {
   const b = e.target.closest("[data-tab]"); if (!b) return;
+  if (b.dataset.tab !== tab) selectedPRs.clear();
   tab = b.dataset.tab; store.set("tab", tab); render();
 });
 document.getElementById("filters").addEventListener("click", e => {
