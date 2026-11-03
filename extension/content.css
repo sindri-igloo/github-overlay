@@ -1,0 +1,3 @@
+/* While the overlay is showing, hide GitHub's own inbox content next to it. */
+html.gho-active main > :not(#gho-host) { display: none !important; }
+#gho-host { display: block; flex: 1 1 auto; width: 100%; min-width: 0; }

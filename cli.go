@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -117,8 +119,50 @@ func readState() *state {
 	return &s
 }
 
+// loopbackAddr maps a localhost name (localhost, *.localhost) to 127.0.0.1,
+// since the server binds loopback directly and DNS may not agree: Tailscale's
+// MagicDNS breaks *.localhost lookups.
+func loopbackAddr(addr string) (string, bool) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr, false
+	}
+	h := strings.ToLower(host)
+	if h == "localhost" || strings.HasSuffix(h, ".localhost") {
+		return net.JoinHostPort("127.0.0.1", port), true
+	}
+	return addr, false
+}
+
+// resolvesToLoopback reports whether the system resolver maps host to
+// loopback addresses only.
+func resolvesToLoopback(host string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ips, err := net.DefaultResolver.LookupHost(ctx, host)
+	if err != nil || len(ips) == 0 {
+		return false
+	}
+	for _, s := range ips {
+		if ip := net.ParseIP(s); ip == nil || !ip.IsLoopback() {
+			return false
+		}
+	}
+	return true
+}
+
 func healthy(addr string) bool {
-	c := &http.Client{Timeout: time.Second}
+	// Dial loopback directly for localhost names; the URL and Host header
+	// keep the name.
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	d := &net.Dialer{Timeout: time.Second}
+	t.DialContext = func(ctx context.Context, network, a string) (net.Conn, error) {
+		if lb, ok := loopbackAddr(a); ok {
+			a = lb
+		}
+		return d.DialContext(ctx, network, a)
+	}
+	c := &http.Client{Timeout: time.Second, Transport: t}
 	resp, err := c.Get("http://" + addr + "/healthz")
 	if err != nil {
 		return false
@@ -355,7 +399,18 @@ func cmdOpen(args []string) error {
 			return errors.New("server started but its state file is missing")
 		}
 	}
-	return exec.Command("open", "http://"+s.Addr).Run()
+	url := "http://" + s.Addr
+	// Browsers that use the system resolver (Safari) can't reach a *.localhost
+	// name when VPN or Tailscale DNS hijacks it. Page state (tab, filters) is
+	// saved per origin, so it won't carry over between the two URLs.
+	if lb, ok := loopbackAddr(s.Addr); ok {
+		host, _, _ := net.SplitHostPort(s.Addr)
+		if !resolvesToLoopback(host) {
+			url = "http://" + lb
+			fmt.Printf("%s doesn't resolve to this machine (VPN or Tailscale DNS?); opening %s\n", host, url)
+		}
+	}
+	return exec.Command("open", url).Run()
 }
 
 func cmdLogs(args []string) error {

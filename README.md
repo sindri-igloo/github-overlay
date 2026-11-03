@@ -51,6 +51,8 @@ Flags for `start`, `restart`, `open` and `serve`:
 | `-closed-days` | `7` | how far back "Recently closed" goes |
 | `-bots` | `igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer` | logins counted as bots, in addition to GitHub App accounts |
 
+The CLI doesn't depend on DNS for `*.localhost`. If a browser can't reach http://prs.localhost:7777 (some VPNs and Tailscale DNS break `*.localhost` for browsers that use system DNS), use http://127.0.0.1:7777, or start with `-addr 127.0.0.1:7777`.
+
 The PID file and log are kept in `~/Library/Caches/github-overlay/`.
 
 ## Tabs
@@ -69,6 +71,9 @@ gray commented; a PR with changes requested gets a red edge and names who asked,
 until they are asked to review again), unresolved threads (people in red, bots as a gray `+N`), and age.
 Press `r` to refresh.
 
+When your PRs span more than one owner, chips next to the title narrow every
+tab to the orgs you pick. The choice is remembered in the browser.
+
 ## Connected PRs
 
 Unconnected PRs share one box at the top; below it, open PRs are grouped when one references another, either in its description
@@ -81,3 +86,28 @@ or the title of the bottom PR of the stack when no title has a scope. Click the 
 the name is kept in `groups.json` under your config directory (`~/Library/Application Support/github-overlay/` on macOS), and clearing it reverts to the automatic one.
 
 Each search returns at most 50 PRs.
+
+## Browser extension
+
+`extension/` shows the same dashboard in place of GitHub's own pull request
+inbox at https://github.com/pulls/inbox, styled with GitHub's theme colors so
+it follows light, dark and dimmed. It reads from the local server, so keep
+`github-overlay start` running. A link above the dashboard switches back to
+GitHub's inbox (remembered per browser). It expects the server on the default
+`prs.localhost:7777`; for another `-addr`, change `SERVER` in
+`extension/background.js` and `host_permissions` in `extension/manifest.json`.
+
+The same folder works in Chrome and Firefox:
+
+- **Chrome**: open `chrome://extensions`, turn on Developer mode, click
+  "Load unpacked" and pick the `extension` folder.
+- **Firefox** (128+): open `about:debugging#/runtime/this-firefox`, click
+  "Load Temporary Add-on…" and pick `extension/manifest.json`. Temporary
+  add-ons are removed when Firefox quits; to keep it, sign it as an unlisted
+  add-on with `web-ext sign` or use Firefox Developer Edition with
+  `xpinstall.signatures.required` off. If the dashboard says it can't reach
+  the server, allow the extension's site access under `about:addons`.
+
+The dashboard code (`extension/ui.js`, `extension/ui.css`) is shared: the Go
+server embeds the same files for the standalone page, so changes show up in
+both.

@@ -1,0 +1,20 @@
+/* On github.com, take colors and font from GitHub's theme (Primer variables
+   inherit into the shadow root), so the overlay follows light/dark/dimmed. */
+.gho.on-github {
+  position: relative;
+  --bg: var(--bgColor-default, #ffffff); --bg-subtle: var(--bgColor-muted, #f6f8fa);
+  --border: var(--borderColor-default, #d0d7de); --border-muted: var(--borderColor-muted, #e5e8eb);
+  --fg: var(--fgColor-default, #1f2328); --fg-muted: var(--fgColor-muted, #59636e); --link: var(--fgColor-accent, #0969da);
+  --green: var(--fgColor-success, #1a7f37); --red: var(--fgColor-danger, #d1242f); --yellow: var(--fgColor-attention, #9a6700);
+  --purple: var(--fgColor-done, #8250df); --gray: var(--fgColor-neutral, #818b98);
+  --blue-bg: var(--bgColor-accent-muted, #ddf4ff); --gray-bg: var(--bgColor-neutral-muted, #eff2f5);
+  --purple-bg: var(--bgColor-done-muted, #fbefff); --purple-border: var(--borderColor-done-muted, #d8b9ff);
+  font-family: var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans", Helvetica, Arial, sans-serif);
+  background: transparent;
+}
+.switch { display: flex; justify-content: flex-end; max-width: 1100px; margin: 0 auto; padding: 8px 16px 0;
+  font: 12px/1.5 var(--fontStack-sansSerif, -apple-system, BlinkMacSystemFont, sans-serif); }
+.switch button { font: inherit; background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--fgColor-muted, #59636e); }
+.switch button:hover { color: var(--fgColor-accent, #0969da); text-decoration: underline; }
+:host(:not(.loaded)) { visibility: hidden; }
