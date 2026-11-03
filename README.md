@@ -7,8 +7,14 @@ and bundles of PRs that reference each other.
 
 It's a single Go binary with the page embedded. It authenticates with your
 `gh` CLI token and polls GitHub's GraphQL API every 2 minutes while the page
-is open (about 130 of your 5,000 hourly points per refresh), pausing when the
-budget runs low or GitHub rate-limits it.
+is open, pausing when the budget runs low or GitHub rate-limits it.
+
+A refresh costs 57 of your 5,000 hourly GraphQL points: 28 each for your open
+PRs and your review requests, 1 for recently closed PRs. GitHub prices a query
+by the page sizes it asks for, not by what comes back, so the cost holds no
+matter how many PRs you have. At the default `-interval 2m` that is up to
+about 1,700 points an hour (a third of the budget) while the page is open, and
+nothing while it is closed. A longer interval lowers it proportionally.
 
 ## Install
 
