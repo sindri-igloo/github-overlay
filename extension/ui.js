@@ -7,11 +7,14 @@
 //   opts.unreachable    error shown when the server can't be reached
 //   opts.favicon        update the page's #favicon link
 (() => {
+// Column labels; repeated per column when the two sections sit side by side.
+const COLS = `<div class="cols"><span class="selcol"></span><span></span><span></span><span title="CI">CI</span><span>Reviews</span><span title="Unresolved threads">Threads</span><span>Age</span></div>`;
 const TEMPLATE = `<div class="wrap">
   <header>
     <h1>Pull requests</h1>
     <div class="filters orgs" id="orgs"></div>
     <span class="meta" id="meta"></span>
+    <button class="iconbtn" id="split" title="Side by side" aria-pressed="false">⇆</button>
     <button class="iconbtn" id="refresh" title="Refresh now (r)">↻</button>
   </header>
   <div id="error"></div>
@@ -19,7 +22,7 @@ const TEMPLATE = `<div class="wrap">
     <nav class="tabs" id="tabs"></nav>
     <div class="filters" id="filters"></div>
   </div>
-  <div class="cols"><span class="selcol"></span><span></span><span></span><span title="CI">CI</span><span>Reviews</span><span title="Unresolved threads">Threads</span><span>Age</span></div>
+  ${COLS}
   <div class="list" id="list"><div class="empty">Loading pull requests…</div></div>
 </div>
 <div class="selbar" id="selbar" hidden></div>`;
@@ -94,6 +97,9 @@ function mount(root, opts = {}) {
   let confirming = null, confirmTimer = 0;
   let tab = store.get("tab", "mine");
   let filter = store.get("filter", "all");
+  // Mine and To review as two columns; the Closed tab always shows alone.
+  let split = store.get("split", "0") === "1";
+  const splitOn = () => split && tab !== "closed";
   if (!TABS.some(t => t.id === tab)) tab = "mine";
   if (!FILTERS[filter]) filter = "all";
   // Repo owners to show, on every tab; empty shows all.
@@ -177,10 +183,11 @@ function mount(root, opts = {}) {
   const lc = s => s.toLowerCase();
   // Queued where the base branch has a merge queue, merged otherwise. GitHub
   // still decides: it refuses when checks are missing or the PR conflicts.
-  const canLand = p => tab === "mine" && p.state === "OPEN" && p.reviewDecision === "APPROVED" && !p.queued;
-  const canRequest = p => tab === "mine" && (p.state === "OPEN" || p.state === "DRAFT");
+  // Row features follow the section the row is drawn in, not the selected tab.
+  const canLand = (p, sid) => sid === "mine" && p.state === "OPEN" && p.reviewDecision === "APPROVED" && !p.queued;
+  const canRequest = (p, sid) => sid === "mine" && (p.state === "OPEN" || p.state === "DRAFT");
 
-  function reviewCell(p) {
+  function reviewCell(p, sid) {
     const requested = new Set(p.requestedReviewers.map(lc));
     const reviewed = Object.fromEntries(humanReviews(p).map(r => [lc(r.login), r.state]));
     // A reviewer who was re-requested shows once, as requested.
@@ -200,7 +207,7 @@ function mount(root, opts = {}) {
     } else if (noReviewer(p)) {
       inner = `<span class="none">none</span>`;
     }
-    if (!canRequest(p)) return inner;
+    if (!canRequest(p, sid)) return inner;
     const open = picker && !picker.bulk && picker.key === p.key ? " open" : "";
     return `<button class="revbtn${open}" data-reviewers="${esc(p.key)}" title="Request reviewers">${inner}<span class="plus">+</span></button>`;
   }
@@ -212,9 +219,9 @@ function mount(root, opts = {}) {
     return `<a class="threads ${p.humanThreads ? "hot" : ""}" href="${esc(p.url)}/files" target="${target}" title="Unresolved: ${title}">${svg(P.comment, "currentColor", 12)}${n}</a>`;
   }
 
-  function row(p, bundleMembers) {
+  function row(p, bundleMembers, sid) {
     const sub = [`<span>${esc(repoLabel(p.repo))} #${p.number}</span>`];
-    if (tab === "review") sub.push(`<span>${esc(p.author)}</span>`);
+    if (sid === "review") sub.push(`<span>${esc(p.author)}</span>`);
     if (!DEFAULT_BASES.has(p.base)) sub.push(`<span title="Base branch">on ${esc(p.base)}</span>`);
     sub.push(`<span><span class="add">+${p.additions}</span> <span class="del">−${p.deletions}</span></span>`);
     const by = changesBy(p), again = reReview(p);
@@ -223,7 +230,7 @@ function mount(root, opts = {}) {
     if (p.conflicting) sub.push(`<span class="warn">conflicts</span>`);
     if (p.queued) sub.push(`<span>${queuePill(p.queued)}</span>`); // wrapped so the "·" separator stays outside the pill
     else if (landErrors.has(p.key)) sub.push(`<span class="warn">${esc(landErrors.get(p.key))}</span>`);
-    else if (canLand(p)) {
+    else if (canLand(p, sid)) {
       const busy = landBusy.has(p.key), sure = confirming === p.key;
       const label = busy ? (p.mergeQueue ? "Queuing…" : "Merging…") : p.mergeQueue ? "Add to merge queue" : sure ? "Confirm merge" : "Merge";
       sub.push(`<span><button class="btn small${sure ? " danger" : ""}" data-land="${esc(p.key)}" ${busy ? "disabled" : ""}>${label}</button></span>`);
@@ -236,10 +243,10 @@ function mount(root, opts = {}) {
     }).join(", ")}</span>`);
     const when = isDone(p) ? p.closedAt : p.updatedAt;
     // Rows that can't be requested get an empty cell so the columns line up.
-    const pick = tab !== "mine" ? "" : canRequest(p)
+    const pick = sid !== "mine" ? "" : canRequest(p, sid)
       ? `<span><input type="checkbox" class="rowsel" data-sel="${esc(p.key)}" ${selectedPRs.has(p.key) ? "checked" : ""} aria-label="Select ${esc(repoLabel(p.repo))} #${p.number}"></span>`
       : `<span></span>`;
-    const cls = (isDone(p) && tab !== "closed" ? " done" : "") + (!isDone(p) && by.length ? " changes" : "");
+    const cls = (isDone(p) && sid !== "closed" ? " done" : "") + (!isDone(p) && by.length ? " changes" : "");
     return `<div class="row${cls}">
       ${pick}${p.queued
         ? `<span title="in merge queue">${svg(P.QUEUED, "var(--purple)")}</span>`
@@ -249,7 +256,7 @@ function mount(root, opts = {}) {
         <div class="sub">${sub.join("")}</div>
       </div>
       <div class="cell ci">${ciCell(p)}</div>
-      <div class="cell rev">${reviewCell(p)}</div>
+      <div class="cell rev">${reviewCell(p, sid)}</div>
       <div class="cell thr">${threadCell(p)}</div>
       <div class="cell age" title="${esc(new Date(when).toLocaleString())}">${ago(when)}</div>
     </div>`;
@@ -332,17 +339,19 @@ function mount(root, opts = {}) {
       data.fetchedAt ? `updated ${ago(data.fetchedAt) === "now" ? "just now" : ago(data.fetchedAt) + " ago"}` : "loading…";
     $("meta").title = `${data.viewer || ""} · ${data.rateRemaining} API points left`;
 
+    const both = splitOn();
+    // Both tabs read as selected in the split view; clicking either keeps it.
     $("tabs").innerHTML = TABS.map(t =>
-      `<button class="tab ${t.id === tab ? "active" : ""}" data-tab="${t.id}">${t.label}<span class="n">${section(t.id).length}</span></button>`
+      `<button class="tab ${t.id === tab || (both && t.id !== "closed") ? "active" : ""}" data-tab="${t.id}">${t.label}<span class="n">${section(t.id).length}</span></button>`
     ).join("");
+    $("split").setAttribute("aria-pressed", split);
+    root.querySelector(".wrap").classList.toggle("split", both);
+    $("list").classList.toggle("grid", both);
 
-    const prs = section(tab);
-    // PRs just out of the queue would otherwise vanish from Mine unseen; they
-    // show under Merging, and the 30s redraw expires them.
-    const cutoff = Date.now() - 60 * 60 * 1000;
-    const justMerged = section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
-      .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
-    const useFilters = tab === "mine";
+    // Filters are Mine-only: they show on the Mine tab and beside Mine's column.
+    const useFilters = tab === "mine" || both;
+    const prs = section("mine");
+    const justMerged = recentlyMerged();
     $("filters").innerHTML = useFilters ? Object.entries(FILTERS).map(([id, f]) => {
       const n = prs.filter(f.fn).length;
       // Merging stays reachable while only just-merged PRs are left to show.
@@ -350,53 +359,19 @@ function mount(root, opts = {}) {
       return `<button class="chip ${id === filter ? "active" : ""}" data-filter="${id}">${f.label}${id === "all" ? "" : `<span class="n">${n}</span>`}</button>`;
     }).join("") : "";
 
-    const shown = prs.filter(useFilters ? FILTERS[filter].fn : () => true);
+    const sids = both ? ["mine", "review"] : [tab];
+    const parts = sids.map(sid => renderSection(sid, sid === "mine" && useFilters ? FILTERS[filter].fn : () => true));
     // Only requestable rows that are on screen can stay selected.
-    shownSel = new Set(shown.filter(canRequest).map(p => p.key));
+    shownSel = new Set(sids.includes("mine") ? parts[sids.indexOf("mine")].shown.filter(p => canRequest(p, "mine")).map(p => p.key) : []);
     for (const k of [...selectedPRs]) if (!shownSel.has(k)) selectedPRs.delete(k);
-    root.classList.toggle("sel", tab === "mine");
+    // The checkbox column belongs to Mine: the root when alone, its column when split.
+    root.classList.toggle("sel", !both && tab === "mine");
 
-    // Unconnected PRs share one card at the top; each bundle follows in its
-    // own card. Both keep the section's order (most recently updated first).
-    // Open tabs group by bundle, which can include merged/closed PRs linked to
-    // the open ones; those stay folded until asked for. The Closed tab groups
-    // closed PRs linked to each other.
-    const groupOf = p => tab === "closed" ? p.closedBundle : p.bundle;
-    const loose = [], bundles = [], done = new Set();
-    for (const p of shown) {
-      if (done.has(p.key)) continue;
-      done.add(p.key);
-      const id = groupOf(p);
-      if (!id) { loose.push(row(p, new Set([p.key]))); continue; }
-      const members = shown.filter(q => groupOf(q) === id);
-      members.forEach(q => done.add(q.key));
-      const all = new Set(data.bundles[id]);
-      const finished = tab === "closed" ? [] : [...all].map(k => data.prs[k]).filter(isDone)
-        .sort((a, b) => (b.closedAt || "").localeCompare(a.closedAt || ""));
-      const gid = data.bundles[id][0]; // ids renumber on refresh; the first member is steadier
-      const open = expanded.has(gid);
-      const hidden = all.size - members.length - finished.length;
-      const counts = tab === "closed" ? `${all.size} PRs` : `${all.size - finished.length} open`;
-      const reqKeys = members.filter(canRequest).map(q => q.key);
-      const pickAll = reqKeys.length
-        ? `<button class="toggle" data-selkeys="${esc(reqKeys.join(","))}">${reqKeys.every(k => selectedPRs.has(k)) ? "Unselect" : "Select"}</button>` : "";
-      const toggle = pickAll + (finished.length
-        ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "");
-      const keys = [...all], auto = autoName(keys), manual = manualName(keys);
-      const nameEl = editing?.gid === gid
-        ? `<input class="name-input" value="${esc(editing.draft)}" placeholder="${esc(auto)}" maxlength="80">`
-        : `<button class="name" data-rename="${esc(gid)}" data-keys="${esc(keys.join(","))}" data-auto="${esc(auto)}" data-manual="${esc(manual)}" title="Rename group">${esc(manual || auto)}</button>`;
-      const rows = members.map(q => row(q, all)).join("") + (open ? finished.map(q => row(q, all)).join("") : "");
-      bundles.push(`<div class="card bundle"><div class="bundle-head">${svg(P.link, "currentColor", 12)}${nameEl}<span class="n">${counts}${hidden ? `, ${hidden} not shown` : ""}</span>${toggle}</div>${rows}</div>`);
-    }
     // An open rename input survives the 30s redraws by leaving the list alone.
     if (editing?.drawn) return renderSelbar();
-    const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
-    if (tab === "mine" && filter === "merging" && justMerged.length) {
-      const merged = justMerged;
-      cards.push(`<div class="card"><div class="bundle-head just-merged">${svg(P.MERGED, "currentColor", 12)}<span class="name">Just merged</span><span class="n">${merged.length}</span></div>${merged.map(p => row(p, new Set([p.key]))).join("")}</div>`);
-    }
-    $("list").innerHTML = cards.join("") || `<div class="empty">Nothing here.</div>`;
+    $("list").innerHTML = both
+      ? parts.map((x, i) => `<section class="col${sids[i] === "mine" ? " sel" : ""}"><h2 class="colhead">${TABS.find(t => t.id === sids[i]).label}<span class="n">${section(sids[i]).length}</span></h2>${COLS}<div class="cards">${x.html}</div></section>`).join("")
+      : parts[0].html;
     renderSelbar();
     if (editing) {
       editing.drawn = true;
@@ -405,12 +380,64 @@ function mount(root, opts = {}) {
     }
   }
 
+  // PRs just out of the queue would otherwise vanish from Mine unseen; they
+  // show under Merging, and the 30s redraw expires them.
+  function recentlyMerged() {
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    return section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
+      .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
+  }
+
+  // Cards for one section (filterFn applied) as { html, shown }.
+  function renderSection(sid, filterFn) {
+    const shown = section(sid).filter(filterFn);
+    // Unconnected PRs share one card at the top; each bundle follows in its
+    // own card. Both keep the section's order (most recently updated first).
+    // Open tabs group by bundle, which can include merged/closed PRs linked to
+    // the open ones; those stay folded until asked for. The Closed tab groups
+    // closed PRs linked to each other.
+    const groupOf = p => sid === "closed" ? p.closedBundle : p.bundle;
+    const loose = [], bundles = [], done = new Set();
+    for (const p of shown) {
+      if (done.has(p.key)) continue;
+      done.add(p.key);
+      const id = groupOf(p);
+      if (!id) { loose.push(row(p, new Set([p.key]), sid)); continue; }
+      const members = shown.filter(q => groupOf(q) === id);
+      members.forEach(q => done.add(q.key));
+      const all = new Set(data.bundles[id]);
+      const finished = sid === "closed" ? [] : [...all].map(k => data.prs[k]).filter(isDone)
+        .sort((a, b) => (b.closedAt || "").localeCompare(a.closedAt || ""));
+      const gid = data.bundles[id][0]; // ids renumber on refresh; the first member is steadier
+      const open = expanded.has(gid);
+      const hidden = all.size - members.length - finished.length;
+      const counts = sid === "closed" ? `${all.size} PRs` : `${all.size - finished.length} open`;
+      const reqKeys = members.filter(q => canRequest(q, sid)).map(q => q.key);
+      const pickAll = reqKeys.length
+        ? `<button class="toggle" data-selkeys="${esc(reqKeys.join(","))}">${reqKeys.every(k => selectedPRs.has(k)) ? "Unselect" : "Select"}</button>` : "";
+      const toggle = pickAll + (finished.length
+        ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "");
+      const keys = [...all], auto = autoName(keys), manual = manualName(keys);
+      const nameEl = editing?.gid === gid
+        ? `<input class="name-input" value="${esc(editing.draft)}" placeholder="${esc(auto)}" maxlength="80">`
+        : `<button class="name" data-rename="${esc(gid)}" data-keys="${esc(keys.join(","))}" data-auto="${esc(auto)}" data-manual="${esc(manual)}" title="Rename group">${esc(manual || auto)}</button>`;
+      const rows = members.map(q => row(q, all, sid)).join("") + (open ? finished.map(q => row(q, all, sid)).join("") : "");
+      bundles.push(`<div class="card bundle"><div class="bundle-head">${svg(P.link, "currentColor", 12)}${nameEl}<span class="n">${counts}${hidden ? `, ${hidden} not shown` : ""}</span>${toggle}</div>${rows}</div>`);
+    }
+    const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
+    const merged = recentlyMerged();
+    if (sid === "mine" && filter === "merging" && merged.length) {
+      cards.push(`<div class="card"><div class="bundle-head just-merged">${svg(P.MERGED, "currentColor", 12)}<span class="name">Just merged</span><span class="n">${merged.length}</span></div>${merged.map(p => row(p, new Set([p.key]), sid)).join("")}</div>`);
+    }
+    return { html: cards.join("") || `<div class="empty">Nothing here.</div>`, shown };
+  }
+
   function renderSelbar() {
     const n = selectedPRs.size, bar = $("selbar");
     root.querySelector(".wrap").classList.toggle("hasbar", n > 0 || !!landNote);
     bar.hidden = !n && !landNote;
     if (bar.hidden) { bar.innerHTML = ""; return; }
-    const land = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k]));
+    const land = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k], "mine"));
     const queues = land.filter(k => data.prs[k].mergeQueue).length, merges = land.length - queues;
     const sure = confirming === "bulk";
     const landBtn = land.length
@@ -764,7 +791,7 @@ function mount(root, opts = {}) {
       return;
     }
     if (evt(e).closest("[data-bar=land]")) {
-      const keys = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k]));
+      const keys = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k], "mine"));
       if (keys.length && confirmClick("bulk")) land(keys);
       return;
     }
@@ -825,7 +852,8 @@ function mount(root, opts = {}) {
 
   $("tabs").addEventListener("click", e => {
     const b = evt(e).closest("[data-tab]"); if (!b) return;
-    if (b.dataset.tab !== tab) selectedPRs.clear();
+    // Mine's selection survives a hop between the two split columns' tabs.
+    if (b.dataset.tab !== tab && !(split && tab !== "closed" && b.dataset.tab !== "closed")) selectedPRs.clear();
     tab = b.dataset.tab; store.set("tab", tab); render(); motion.afterSwitch();
   });
   $("filters").addEventListener("click", e => {
@@ -838,6 +866,9 @@ function mount(root, opts = {}) {
     if (!o) orgs.clear(); else orgs.has(o) ? orgs.delete(o) : orgs.add(o);
     store.set("orgs", JSON.stringify([...orgs]));
     render();
+  });
+  $("split").addEventListener("click", () => {
+    split = !split; store.set("split", split ? "1" : "0"); render(); motion.afterSwitch();
   });
   $("refresh").addEventListener("click", () => load(true));
   $("list").addEventListener("click", e => {
