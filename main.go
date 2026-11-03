@@ -145,6 +145,7 @@ type serveOpts struct {
 	interval   time.Duration
 	closedDays int
 	bots       string
+	args       []string // the raw flags, recorded in the state file for update
 }
 
 // serveFlags registers the server flags on fs. start and serve share them so
@@ -244,7 +245,7 @@ func serve(o *serveOpts, pidFile bool) error {
 	}
 
 	if pidFile {
-		if err := writeState(state{PID: os.Getpid(), Addr: o.addr}); err != nil {
+		if err := writeState(state{PID: os.Getpid(), Addr: o.addr, Version: version(), Args: o.args}); err != nil {
 			return err
 		}
 		defer removeState()
