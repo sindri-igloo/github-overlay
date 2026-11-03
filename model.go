@@ -32,6 +32,7 @@ type PR struct {
 	MergeMethod        string   `json:"-"`   // SQUASH, MERGE or REBASE: what the repo allows, in that order of preference
 	Number             int      `json:"number"`
 	Title              string   `json:"title"`
+	Body               string   `json:"-"` // for naming groups; not sent to the page
 	URL                string   `json:"url"`
 	Repo               string   `json:"repo"`
 	Author             string   `json:"author"`
@@ -260,6 +261,7 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 
 	seen := map[string]bool{p.Key: true}
 	p.Links = []string{}
+	p.Body = r.Body
 	refs := bodyRefs(p.Repo, r.Body, repos)
 	for _, n := range r.TimelineItems.Nodes {
 		if n.Source != nil && n.Source.Typename == "PullRequest" {
@@ -318,24 +320,76 @@ func buildSnapshot(res *queryResult, bots map[string]bool) *Snapshot {
 		}
 	}
 
-	// Two groupings share one id space in s.Bundles:
-	//   Bundle: open PRs plus everything they link to, open or closed. A
-	//     closed PR joins only through an open one; closed-to-closed links
-	//     don't count here, since old merged PRs chain unrelated work together.
-	//   ClosedBundle: closed PRs linked to each other, for the Closed tab.
-	open := func(p *PR) bool { return p.State == "OPEN" || p.State == "DRAFT" }
-	next := 1
-	next = s.group(next, func(a, b *PR) bool { return open(a) || open(b) },
-		func(p *PR, id int) { p.Bundle = id })
-	s.group(next, func(a, b *PR) bool { return !open(a) && !open(b) },
-		func(p *PR, id int) { p.ClosedBundle = id })
+	s.regroup(nil)
 	return s
 }
 
-// group joins PRs linked in either direction where edge allows it, records
-// each group of two or more in s.Bundles from id next on, calls assign for
-// every member, and returns the next free id.
-func (s *Snapshot) group(next int, edge func(a, b *PR) bool, assign func(*PR, int)) int {
+// regroup recomputes the bundles. Two groupings share one id space in
+// s.Bundles:
+//   - Bundle: open PRs plus the closed PRs they link to. Closed-to-closed
+//     links don't count here, since old merged PRs chain unrelated work
+//     together. With Claude's groups (c), those decide the open PRs Claude
+//     was asked about, and each closed PR joins just one open PR it links
+//     to, so it can't chain two of Claude's groups back together. Open PRs
+//     Claude hasn't seen yet keep their links.
+//   - ClosedBundle: closed PRs linked to each other, for the Closed tab.
+func (s *Snapshot) regroup(c *claudeGroups) {
+	s.Bundles = map[int][]string{}
+	for _, p := range s.PRs {
+		p.Bundle, p.ClosedBundle = 0, 0
+	}
+	open := func(p *PR) bool { return p.State == "OPEN" || p.State == "DRAFT" }
+	keys := make([]string, 0, len(s.PRs))
+	for k := range s.PRs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	var openEdges, closedEdges [][2]string
+	neighbors := map[string][]string{} // closed PR -> open PRs it links with, either way
+	for _, k := range keys {
+		p := s.PRs[k]
+		for _, l := range p.Links {
+			q, ok := s.PRs[l]
+			switch {
+			case !ok:
+			case !open(p) && !open(q):
+				closedEdges = append(closedEdges, [2]string{k, l})
+			case c == nil:
+				openEdges = append(openEdges, [2]string{k, l})
+			case open(p) && open(q):
+				if !c.covered[k] && !c.covered[l] {
+					openEdges = append(openEdges, [2]string{k, l})
+				}
+			case open(p):
+				neighbors[l] = append(neighbors[l], k)
+			default:
+				neighbors[k] = append(neighbors[k], l)
+			}
+		}
+	}
+	if c != nil {
+		for _, g := range c.groups {
+			for i := 1; i < len(g); i++ {
+				if a, b := s.PRs[g[0]], s.PRs[g[i]]; a != nil && b != nil && open(a) && open(b) {
+					openEdges = append(openEdges, [2]string{g[0], g[i]})
+				}
+			}
+		}
+		for _, k := range keys {
+			if ns := neighbors[k]; len(ns) > 0 {
+				sort.Strings(ns)
+				openEdges = append(openEdges, [2]string{k, ns[0]})
+			}
+		}
+	}
+	next := s.group(1, openEdges, func(p *PR, id int) { p.Bundle = id })
+	s.group(next, closedEdges, func(p *PR, id int) { p.ClosedBundle = id })
+}
+
+// group joins the PRs at each edge and numbers the groups of two or more
+// from next, returning the next free id.
+func (s *Snapshot) group(next int, edges [][2]string, assign func(*PR, int)) int {
 	parent := map[string]string{}
 	var find func(string) string
 	find = func(k string) string {
@@ -345,12 +399,8 @@ func (s *Snapshot) group(next int, edge func(a, b *PR) bool, assign func(*PR, in
 		parent[k] = find(parent[k])
 		return parent[k]
 	}
-	for k, p := range s.PRs {
-		for _, l := range p.Links {
-			if q, ok := s.PRs[l]; ok && edge(p, q) {
-				parent[find(k)] = find(l)
-			}
-		}
+	for _, e := range edges {
+		parent[find(e[0])] = find(e[1])
 	}
 	groups := map[string][]string{}
 	for k := range s.PRs {

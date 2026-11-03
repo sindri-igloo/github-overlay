@@ -14,8 +14,11 @@ const TEMPLATE = `<div class="wrap">
     <h1>Pull requests</h1>
     <div class="filters orgs" id="orgs"></div>
     <span class="meta" id="meta"></span>
+    <span class="claude-status" id="claude-status" hidden></span>
     <button class="iconbtn" id="split" title="Side by side" aria-pressed="false">⇆</button>
     <button class="iconbtn" id="refresh" title="Refresh now (r)">↻</button>
+    <button class="iconbtn" id="settings-btn" title="Settings" aria-expanded="false" aria-controls="settings">⚙</button>
+    <div class="settings" id="settings" role="dialog" aria-label="Settings" hidden></div>
   </header>
   <div id="error"></div>
   <div class="bar">
@@ -338,6 +341,7 @@ function mount(root, opts = {}) {
     $("meta").textContent =
       data.fetchedAt ? `updated ${ago(data.fetchedAt) === "now" ? "just now" : ago(data.fetchedAt) + " ago"}` : "loading…";
     $("meta").title = `${data.viewer || ""} · ${data.rateRemaining} API points left`;
+    drawClaudeStatus();
 
     const both = splitOn();
     // Both tabs read as selected in the split view; clicking either keeps it.
@@ -417,7 +421,8 @@ function mount(root, opts = {}) {
         ? `<button class="toggle" data-selkeys="${esc(reqKeys.join(","))}">${reqKeys.every(k => selectedPRs.has(k)) ? "Unselect" : "Select"}</button>` : "";
       const toggle = pickAll + (finished.length
         ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "");
-      const keys = [...all], auto = autoName(keys), manual = manualName(keys);
+      // A generated title, when the server has one, beats the scope-based name.
+      const keys = [...all], auto = data.groupTitles?.[id] || autoName(keys), manual = manualName(keys);
       const nameEl = editing?.gid === gid
         ? `<input class="name-input" value="${esc(editing.draft)}" placeholder="${esc(auto)}" maxlength="80">`
         : `<button class="name" data-rename="${esc(gid)}" data-keys="${esc(keys.join(","))}" data-auto="${esc(auto)}" data-manual="${esc(manual)}" title="Rename group">${esc(manual || auto)}</button>`;
@@ -888,6 +893,164 @@ function mount(root, opts = {}) {
     split = !split; store.set("split", split ? "1" : "0"); render(); motion.afterSwitch();
   });
   $("refresh").addEventListener("click", () => load(true));
+
+  // ---- Settings: the opt-in Claude features, saved by the server. The panel
+  // hangs under the gear, over the page, and closes on Escape or a click
+  // outside it.
+
+  let settings = null;
+  let draft = null; // unapplied "How to group" text; kept while the panel is closed
+
+  const settingsOpen = () => !$("settings").hidden;
+
+  function closeSettings() {
+    $("settings").hidden = true;
+    $("settings-btn").setAttribute("aria-expanded", "false");
+  }
+
+  async function toggleSettings() {
+    if (settingsOpen()) return closeSettings();
+    const panel = $("settings");
+    panel.hidden = false;
+    $("settings-btn").setAttribute("aria-expanded", "true");
+    panel.innerHTML = `<p class="settings-note">Loading settings…</p>`;
+    try {
+      const r = await api("/api/settings");
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      settings = body;
+      drawSettings();
+    } catch (e) {
+      panel.innerHTML = `<div class="error">⚠ Couldn't load settings: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function drawSettings(error = "") {
+    const s = settings, off = !s.claude ? "disabled" : "";
+    const text = draft ?? s.groupingPrompt;
+    const toggle = (key, label, help) => `<label class="setting">
+        <input type="checkbox" data-setting="${key}" ${s[key] ? "checked" : ""} ${off}>
+        <span><b>${label}</b><small>${help}</small></span>
+      </label>`;
+    $("settings").innerHTML = `
+      <h2>Claude</h2>
+      <p class="settings-note">${s.claude
+        ? `Off unless you turn it on. Uses your Claude Code login (<code>${esc(s.claude)}</code>) in the background;
+           while on, the titles, branches and the start of the descriptions of your open PRs are sent to Anthropic.
+           The header shows when Claude is working; a grouping takes about 10 seconds.`
+        : `The Claude Code CLI wasn't found. Install it, log in, and restart the overlay server to use these.`}</p>
+      ${toggle("claudeGrouping", "Group related PRs", "Groups open PRs by the piece of work they belong to, using links between them as hints. PRs Claude hasn't seen yet keep their links.")}
+      <div class="setting prompt">
+        <label for="grouping-prompt"><b>How to group</b><small>The instruction Claude groups by. Apply regroups your PRs.</small></label>
+        <textarea id="grouping-prompt" rows="4" maxlength="2000" ${off}>${esc(text)}</textarea>
+        <div class="prompt-actions">
+          <span class="prompt-status" id="prompt-status" role="status"></span>
+          <button type="button" class="btn" id="reset-prompt" title="Put the default instruction in the box">Reset to default</button>
+          <button type="button" class="btn primary" id="apply-prompt" title="Apply (⌘/Ctrl+Enter)">Apply</button>
+        </div>
+      </div>
+      ${toggle("claudeTitles", "Title groups", "Names each group after what it delivers instead of its scopes. Names you set by hand still win.")}
+      <label class="setting model">Model
+        <select data-setting="claudeModel" ${off}>${s.models.map(m =>
+          `<option ${m === s.claudeModel ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
+      </label>
+      ${error ? `<div class="error">⚠ ${esc(error)}</div>` : ""}`;
+    syncPromptButtons();
+    if (data) drawClaudeStatus();
+  }
+
+  // What Claude is still doing in the background, as the server reports it:
+  // shown next to the update time and under Apply. While it works, the page
+  // polls every 2s instead of 30s, so new groups and titles show as they land.
+  let fastPoll = null;
+  let promptApplied = false; // the last Apply went through; say so once Claude is done
+  function drawClaudeStatus() {
+    const c = data.claude, el = $("claude-status");
+    const busy = !!c && (c.grouping || c.titles > 0);
+    const text = !c ? "" : c.grouping ? "Regrouping…"
+      : c.titles ? `Naming ${c.titles} group${c.titles === 1 ? "" : "s"}…` : c.error ? "Claude failed" : "";
+    el.hidden = !text;
+    el.className = "claude-status" + (busy ? " busy" : c?.error ? " err" : "");
+    el.textContent = text;
+    el.title = c?.error && !busy ? `Claude: ${c.error}` : "Claude is working in the background";
+    const ps = $("prompt-status");
+    if (ps) ps.textContent = c?.grouping ? "Regrouping your PRs…"
+      : c?.error ? `Claude failed: ${c.error}` : promptApplied ? "Applied" : "";
+    if (ps) ps.classList.toggle("err", !c?.grouping && !!c?.error);
+    clearTimeout(fastPoll);
+    if (busy) fastPoll = setTimeout(() => document.hidden || load(), 2000);
+  }
+
+  // Apply is live only when the box differs from what's saved; Reset only
+  // when the box isn't the default already.
+  function syncPromptButtons() {
+    const box = $("grouping-prompt"), off = !settings.claude;
+    if (!box) return;
+    $("apply-prompt").disabled = off || box.value.trim() === settings.groupingPrompt;
+    $("reset-prompt").disabled = off || box.value.trim() === settings.defaultGroupingPrompt;
+  }
+
+  async function saveSettings(change) {
+    const prompt = "groupingPrompt" in change;
+    if (prompt) {
+      promptApplied = false;
+      $("prompt-status").textContent = "Applying…";
+    }
+    const next = { claudeGrouping: settings.claudeGrouping, claudeTitles: settings.claudeTitles,
+      claudeModel: settings.claudeModel, groupingPrompt: settings.groupingPrompt, ...change };
+    try {
+      const r = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      settings = body;
+      if (prompt) { draft = null; promptApplied = true; }
+      drawSettings();
+      load(); // turning a feature off applies at once
+    } catch (e) {
+      drawSettings(e.message);
+    }
+  }
+
+  function applyPrompt() {
+    const box = $("grouping-prompt");
+    if (box && !$("apply-prompt").disabled) saveSettings({ groupingPrompt: box.value });
+  }
+
+  $("settings-btn").addEventListener("click", toggleSettings);
+  $("settings").addEventListener("change", e => {
+    const el = evt(e).closest("[data-setting]");
+    if (el) saveSettings({ [el.dataset.setting]: el.type === "checkbox" ? el.checked : el.value });
+  });
+  $("settings").addEventListener("input", e => {
+    if (evt(e).id !== "grouping-prompt") return;
+    draft = evt(e).value;
+    promptApplied = false;
+    if (!data.claude?.grouping) $("prompt-status").textContent = "";
+    syncPromptButtons();
+  });
+  $("settings").addEventListener("click", e => {
+    const t = evt(e);
+    if (t.closest("#apply-prompt")) applyPrompt();
+    if (t.closest("#reset-prompt")) {
+      const box = $("grouping-prompt");
+      box.value = draft = settings.defaultGroupingPrompt;
+      syncPromptButtons();
+      box.focus();
+    }
+  });
+  // Keys typed in the panel stay in it, so they don't reach the host page's
+  // shortcuts (GitHub's, in the extension) or this page's own keys.
+  $("settings").addEventListener("keydown", e => {
+    e.stopPropagation();
+    if (e.key === "Escape") { closeSettings(); $("settings-btn").focus(); }
+    else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && evt(e).id === "grouping-prompt") { e.preventDefault(); applyPrompt(); }
+  });
+  on(document, "keydown", e => { if (e.key === "Escape" && settingsOpen()) closeSettings(); });
+  on(document, "click", e => {
+    if (!settingsOpen()) return;
+    const path = e.composedPath();
+    if (!path.includes($("settings")) && !path.includes($("settings-btn"))) closeSettings();
+  });
   $("list").addEventListener("click", e => {
     const n = evt(e).closest("[data-rename]");
     if (n) {
@@ -998,6 +1161,7 @@ function mount(root, opts = {}) {
   return {
     destroy() {
       timers.forEach(clearInterval);
+      clearTimeout(fastPoll);
       listeners.forEach(([el, type, fn, capture]) => el.removeEventListener(type, fn, capture));
       root.innerHTML = "";
       root.classList.remove("gho", "sel");

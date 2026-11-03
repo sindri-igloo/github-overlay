@@ -31,6 +31,34 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .error { color: var(--red); font-size: 13px; margin-bottom: 8px; }
 
+/* The settings panel hangs under the gear, over the page. */
+header { position: relative; }
+.settings { position: absolute; top: calc(100% + 4px); right: 0; z-index: 20; width: min(480px, calc(100vw - 32px));
+  max-height: calc(100vh - 120px); overflow-y: auto; padding: 12px 14px; font-size: 13px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(1, 4, 9, .2); }
+.settings[hidden] { display: none; }
+.settings h2 { font-size: 14px; margin: 0 0 4px; }
+.settings-note { color: var(--fg-muted); font-size: 12px; margin: 0 0 6px; }
+.settings code { font-size: 11px; word-break: break-all; }
+.setting { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; cursor: pointer; }
+.setting input { margin: 3px 0 0; accent-color: var(--link); }
+.setting small { display: block; color: var(--fg-muted); font-size: 12px; font-weight: 400; }
+.setting.model { align-items: center; gap: 6px; cursor: default; }
+.setting.prompt { display: block; cursor: default; padding-left: 21px; }
+.setting.prompt label { display: block; margin-bottom: 4px; }
+.setting.prompt textarea { display: block; width: 100%; font: inherit; font-size: 12px; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+.prompt-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 6px; }
+.prompt-status { flex: 1; font-size: 12px; color: var(--fg-muted); }
+.prompt-status.err { color: var(--red); }
+.claude-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+.claude-status[hidden] { display: none; }
+.claude-status.busy::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid currentColor;
+  border-right-color: transparent; animation: spin .8s linear infinite; }
+.claude-status.err { color: var(--red); }
+.setting select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 6px; }
+
 .bar { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap;
   border-bottom: 1px solid var(--border); margin-bottom: 12px; }
 /* Tabs hang 1px over the bar's border; padding makes room for that inside the
