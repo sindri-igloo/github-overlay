@@ -798,16 +798,17 @@ function mount(root, opts = {}) {
     }
     btn.classList.remove("spin");
     render();
+    motion.afterLoad(force);
   }
 
   $("tabs").addEventListener("click", e => {
     const b = evt(e).closest("[data-tab]"); if (!b) return;
     if (b.dataset.tab !== tab) selectedPRs.clear();
-    tab = b.dataset.tab; store.set("tab", tab); render();
+    tab = b.dataset.tab; store.set("tab", tab); render(); motion.afterSwitch();
   });
   $("filters").addEventListener("click", e => {
     const b = evt(e).closest("[data-filter]"); if (!b) return;
-    filter = b.dataset.filter; store.set("filter", filter); render();
+    filter = b.dataset.filter; store.set("filter", filter); render(); motion.afterSwitch();
   });
   $("orgs").addEventListener("click", e => {
     const b = evt(e).closest("[data-org]"); if (!b) return;
@@ -843,6 +844,79 @@ function mount(root, opts = {}) {
   on(document, "keydown", e => {
     if (e.key === "r" && !e.metaKey && !e.ctrlKey && !picker && evt(e) === document.body) load(true);
   });
+
+  // ---- Motion: light transitions after refreshes and tab switches.
+  // ?motion=<name> previews one.
+
+  const motion = (() => {
+    const odds = n => Math.random() < 1 / n;
+    const reduced = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let preview = new URLSearchParams(location.search).get("motion");
+
+    function note(text) {
+      const el = document.createElement("div");
+      el.className = "mo-note";
+      el.textContent = text;
+      root.appendChild(el);
+      setTimeout(() => el.remove(), 2500);
+    }
+
+    function ripple() {
+      const rows = root.querySelectorAll(".row");
+      rows.forEach((r, i) => r.style.setProperty("--i", i));
+      $("list").classList.add("mo-ripple");
+      setTimeout(() => $("list").classList.remove("mo-ripple"), 600 + rows.length * 40);
+    }
+
+    function spin() {
+      $("list").classList.add("mo-spin");
+      note("do a barrel roll");
+      setTimeout(() => $("list").classList.remove("mo-spin"), 1100);
+    }
+
+    // Marks a row that hasn't moved in two weeks.
+    function drift() {
+      const idle = [...root.querySelectorAll(".row")].filter(r => /^(1[4-9]|[2-9]\d|\d{3,})d$/.test(r.querySelector(".age")?.textContent));
+      const row = idle[Math.floor(Math.random() * idle.length)];
+      if (!row) return;
+      const el = document.createElement("span");
+      el.className = "mo-drift";
+      el.style.setProperty("--dist", row.offsetWidth + 32 + "px");
+      el.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#b08850" stroke-width="1.4" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9"/><path d="M5 9c4 1 9-3 14 1M4 14c5-2 11 2 16-1M8 4c1 5-2 11 2 16M15 4c-2 5 2 11-1 16M6 18c3-4 9-8 12-12"/></svg>`;
+      row.appendChild(el);
+      setTimeout(() => el.remove(), 2600);
+    }
+
+    function pulse() {
+      if (root.classList.contains("mo-pulse")) return;
+      root.classList.add("mo-pulse");
+      note("🕺 disco mode");
+      setTimeout(() => root.classList.remove("mo-pulse"), 10000);
+    }
+
+    const named = { ripple, spin, drift, pulse };
+    const seq = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
+    let at = 0;
+    on(document, "keydown", e => {
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(evt(e).tagName)) return;
+      at = e.key === seq[at] ? at + 1 : e.key === seq[0] ? 1 : 0;
+      if (at === seq.length) { at = 0; if (!reduced()) pulse(); }
+    });
+
+    return {
+      afterLoad(force) {
+        if (reduced() || !data?.fetchedAt) return;
+        if (preview && named[preview]) { named[preview](); preview = null; return; }
+        if (!force) return;
+        if (odds(50)) spin();
+        else if (odds(30)) ripple();
+      },
+      afterSwitch() {
+        if (!reduced() && odds(20)) drift();
+      },
+    };
+  })();
 
   load();
   // A hidden tab stops asking, so the server sees nobody looking and stops

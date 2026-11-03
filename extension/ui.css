@@ -173,3 +173,27 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   .row .cell.thr, .row .cell.age { grid-row: 2; }
   .title { white-space: normal; }
 }
+
+/* Motion (see motion in ui.js). */
+@keyframes mo-ripple { 0%, 100% { transform: none; } 40% { transform: translateY(-6px); } }
+.list.mo-ripple .row { animation: mo-ripple .5s ease-in-out both; animation-delay: calc(var(--i, 0) * 40ms); }
+@keyframes mo-spin { to { transform: rotate(360deg); } }
+.list.mo-spin { animation: mo-spin 1s ease-in-out; }
+.row { position: relative; }
+.mo-drift { position: absolute; left: 0; top: 50%; margin-top: -12px; pointer-events: none;
+  animation: mo-cross 2.4s linear forwards; }
+.mo-drift svg { animation: mo-roll 2.4s linear forwards; }
+@keyframes mo-cross { from { transform: translateX(-32px); } to { transform: translateX(var(--dist)); } }
+@keyframes mo-roll {
+  0% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-8px) rotate(225deg); }
+  50% { transform: translateY(0) rotate(450deg); } 75% { transform: translateY(-5px) rotate(675deg); }
+  100% { transform: translateY(0) rotate(900deg); }
+}
+.gho.mo-pulse .av { animation: mo-hue 1s linear infinite; }
+.gho.mo-pulse .bundle { animation: mo-glow .5s ease-in-out infinite alternate; }
+@keyframes mo-hue { to { filter: hue-rotate(360deg); } }
+@keyframes mo-glow { to { box-shadow: 0 0 14px var(--purple); } }
+.mo-note { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 12; padding: 6px 12px;
+  border-radius: 6px; background: var(--fg); color: var(--bg); font-size: 13px; pointer-events: none;
+  animation: mo-note 2.5s ease forwards; }
+@keyframes mo-note { 0% { opacity: 0; } 10%, 80% { opacity: 1; } 100% { opacity: 0; } }
