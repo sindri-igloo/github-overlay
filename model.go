@@ -31,6 +31,7 @@ type PR struct {
 	MergeMethod        string   `json:"-"`   // SQUASH, MERGE or REBASE: what the repo allows, in that order of preference
 	Number             int      `json:"number"`
 	Title              string   `json:"title"`
+	Body               string   `json:"-"` // for naming groups; not sent to the page
 	URL                string   `json:"url"`
 	Repo               string   `json:"repo"`
 	Author             string   `json:"author"`
@@ -250,6 +251,7 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 
 	seen := map[string]bool{p.Key: true}
 	p.Links = []string{}
+	p.Body = r.Body
 	refs := bodyRefs(p.Repo, r.Body, repos)
 	for _, n := range r.TimelineItems.Nodes {
 		if n.Source != nil && n.Source.Typename == "PullRequest" {

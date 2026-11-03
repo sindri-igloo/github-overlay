@@ -36,6 +36,7 @@ type server struct {
 
 	candidates candidateCache
 	groups     *groupStore
+	titles     *titler // nil when group titles are off
 
 	fetchMu sync.Mutex // serializes fetches
 	mu      sync.RWMutex
@@ -92,6 +93,7 @@ func (s *server) refresh(minAge time.Duration) {
 		snap.Error = res.Errors[0]
 	}
 	s.snap = snap
+	s.titles.update(snap)
 }
 
 // fail keeps the last good data, surfaces err, and pauses fetching until
@@ -144,8 +146,9 @@ func (s *server) handlePRs(w http.ResponseWriter, r *http.Request) {
 	}
 	json.NewEncoder(w).Encode(struct {
 		*Snapshot
-		GroupNames []groupName `json:"groupNames"`
-	}{s.snap, s.groups.list()})
+		GroupNames  []groupName    `json:"groupNames"`
+		GroupTitles map[int]string `json:"groupTitles"` // by bundle id
+	}{s.snap, s.groups.list(), s.titles.titles(s.snap)})
 }
 
 type serveOpts struct {
@@ -153,6 +156,8 @@ type serveOpts struct {
 	interval   time.Duration
 	closedDays int
 	bots       string
+	titlesBin  string
+	titleModel string
 	args       []string // the raw flags, recorded in the state file for update
 }
 
@@ -165,6 +170,9 @@ func serveFlags(fs *flag.FlagSet) *serveOpts {
 	fs.IntVar(&o.closedDays, "closed-days", 7, "show PRs merged/closed in the last N days")
 	fs.StringVar(&o.bots, "bots", "igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer",
 		"comma-separated logins to treat as bots (in addition to GitHub App accounts)")
+	fs.StringVar(&o.titlesBin, "group-titles", "claude",
+		"Claude Code CLI used to title connected groups from their PRs; empty turns titles off")
+	fs.StringVar(&o.titleModel, "group-titles-model", "claude-opus-5-5", "model the CLI uses for group titles")
 	return o
 }
 
@@ -230,7 +238,8 @@ func serve(o *serveOpts, pidFile bool) error {
 		}
 	}
 	s := &server{client: newClient(), bots: botSet, closedDays: o.closedDays, interval: o.interval,
-		candidates: candidateCache{entries: map[string]cachedCandidates{}}, groups: loadGroups()}
+		candidates: candidateCache{entries: map[string]cachedCandidates{}}, groups: loadGroups(),
+		titles: newTitler(o.titlesBin, o.titleModel)}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/prs", guard(s.handlePRs))

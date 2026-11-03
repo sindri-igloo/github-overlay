@@ -364,7 +364,8 @@ function mount(root, opts = {}) {
         ? `<button class="toggle" data-selkeys="${esc(reqKeys.join(","))}">${reqKeys.every(k => selectedPRs.has(k)) ? "Unselect" : "Select"}</button>` : "";
       const toggle = pickAll + (finished.length
         ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "");
-      const keys = [...all], auto = autoName(keys), manual = manualName(keys);
+      // A generated title, when the server has one, beats the scope-based name.
+      const keys = [...all], auto = data.groupTitles?.[id] || autoName(keys), manual = manualName(keys);
       const nameEl = editing?.gid === gid
         ? `<input class="name-input" value="${esc(editing.draft)}" placeholder="${esc(auto)}" maxlength="80">`
         : `<button class="name" data-rename="${esc(gid)}" data-keys="${esc(keys.join(","))}" data-auto="${esc(auto)}" data-manual="${esc(manual)}" title="Rename group">${esc(manual || auto)}</button>`;
