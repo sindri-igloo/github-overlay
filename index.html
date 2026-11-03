@@ -51,6 +51,7 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   color: var(--fg-muted); cursor: pointer; }
 .chip:hover { background: var(--bg-subtle); color: var(--fg); }
 .chip.active { background: var(--blue-bg); color: var(--link); }
+.orgs { padding: 0; margin-left: 8px; }
 
 .cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 132px 48px 40px; gap: 0 12px; align-items: center; }
 .sel .cols, .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) 24px 132px 48px 40px; }
@@ -182,6 +183,7 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 <div class="wrap">
   <header>
     <h1>Pull requests</h1>
+    <div class="filters orgs" id="orgs"></div>
     <span class="meta" id="meta"></span>
     <button class="iconbtn" id="refresh" title="Refresh now (r)">↻</button>
   </header>
@@ -237,6 +239,11 @@ let tab = store.get("tab", "mine");
 let filter = store.get("filter", "all");
 if (!TABS.some(t => t.id === tab)) tab = "mine";
 if (!FILTERS[filter]) filter = "all";
+// Repo owners to show, on every tab; empty shows all.
+const orgs = new Set((() => { try { return JSON.parse(store.get("orgs", "[]")); } catch { return []; } })());
+const ownerOf = p => p.repo.split("/")[0].toLowerCase();
+const inOrgs = p => !orgs.size || orgs.has(ownerOf(p));
+const section = id => (data.sections[id] || []).map(k => data.prs[k]).filter(inOrgs);
 
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
@@ -426,10 +433,21 @@ async function saveName() {
 
 function render() {
   if (!data) return;
-  setFavicon((data.sections.mine || []).some(k => FILTERS.action.fn(data.prs[k])));
-  const owners = {};
-  Object.values(data.prs).forEach(p => { const o = p.repo.split("/")[0].toLowerCase(); owners[o] = (owners[o] || 0) + 1; });
-  mainOwner = Object.entries(owners).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+  setFavicon(section("mine").some(FILTERS.action.fn));
+  const owners = {}, visible = {};
+  Object.values(data.prs).forEach(p => {
+    const o = ownerOf(p);
+    owners[o] = (owners[o] || 0) + 1;
+    if (inOrgs(p)) visible[o] = (visible[o] || 0) + 1;
+  });
+  mainOwner = Object.entries(visible).sort((a, b) => b[1] - a[1])[0]?.[0] || "";
+
+  // A saved org with no PRs right now keeps its chip, so it can be unticked.
+  const orgList = [...new Set([...Object.keys(owners).sort((a, b) => owners[b] - owners[a]), ...orgs])];
+  document.getElementById("orgs").innerHTML = orgList.length > 1 || orgs.size
+    ? [`<button class="chip ${orgs.size ? "" : "active"}" data-org="">All orgs</button>`,
+       ...orgList.map(o => `<button class="chip ${orgs.has(o) ? "active" : ""}" data-org="${esc(o)}">${esc(o)}</button>`)].join("")
+    : "";
 
   document.getElementById("error").innerHTML = data.error ? `<div class="error">⚠ ${esc(data.error)}</div>` : "";
   document.getElementById("meta").textContent =
@@ -437,10 +455,10 @@ function render() {
   document.getElementById("meta").title = `${data.viewer || ""} · ${data.rateRemaining} API points left`;
 
   document.getElementById("tabs").innerHTML = TABS.map(t =>
-    `<button class="tab ${t.id === tab ? "active" : ""}" data-tab="${t.id}">${t.label}<span class="n">${(data.sections[t.id] || []).length}</span></button>`
+    `<button class="tab ${t.id === tab ? "active" : ""}" data-tab="${t.id}">${t.label}<span class="n">${section(t.id).length}</span></button>`
   ).join("");
 
-  const prs = (data.sections[tab] || []).map(k => data.prs[k]);
+  const prs = section(tab);
   const useFilters = tab === "mine";
   document.getElementById("filters").innerHTML = useFilters ? Object.entries(FILTERS).map(([id, f]) => {
     const n = prs.filter(f.fn).length;
@@ -862,6 +880,13 @@ document.getElementById("tabs").addEventListener("click", e => {
 document.getElementById("filters").addEventListener("click", e => {
   const b = e.target.closest("[data-filter]"); if (!b) return;
   filter = b.dataset.filter; store.set("filter", filter); render();
+});
+document.getElementById("orgs").addEventListener("click", e => {
+  const b = e.target.closest("[data-org]"); if (!b) return;
+  const o = b.dataset.org;
+  if (!o) orgs.clear(); else orgs.has(o) ? orgs.delete(o) : orgs.add(o);
+  store.set("orgs", JSON.stringify([...orgs]));
+  render();
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
 document.getElementById("list").addEventListener("click", e => {
