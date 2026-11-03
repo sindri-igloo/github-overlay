@@ -159,7 +159,10 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .selbar[hidden] { display: none; }
 .selbar .sep { color: var(--gray); }
 .btn.small { font-size: 11px; padding: 0 6px; }
-.queued { color: var(--purple); }
+.queued { font-size: 11px; color: var(--purple); padding: 0 6px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 50%, transparent); }
+.queued.failed { color: var(--red); }
+.bundle-head.just-merged .name { cursor: default; }
 .btn.danger { color: #fff; background: var(--red); border-color: rgba(31,35,40,.15); }
 
 @media (max-width: 640px) {

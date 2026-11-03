@@ -68,8 +68,9 @@ function mount(root, opts = {}) {
   // Shown on the Mine tab only; chips with no matches are hidden.
   const FILTERS = {
     all:     { label: "All", fn: () => true },
-    action:  { label: "Needs action", fn: p => ciFailed(p) || changesBy(p).length > 0 || p.humanThreads > 0 || p.conflicting },
+    action:  { label: "Needs action", fn: p => ciFailed(p) || changesBy(p).length > 0 || p.humanThreads > 0 || p.conflicting || p.queued?.state === "UNMERGEABLE" },
     waiting: { label: "Waiting on review", fn: p => p.requestedReviewers.length > 0 },
+    queued:  { label: "In merge queue", fn: p => !!p.queued },
     noRev:   { label: "No reviewer", fn: noReviewer },
     ready:   { label: "Ready to merge", fn: p => p.reviewDecision === "APPROVED" && p.ci.state === "SUCCESS" && !p.conflicting && !p.humanThreads },
     drafts:  { label: "Drafts", fn: p => p.state === "DRAFT" },
@@ -117,6 +118,8 @@ function mount(root, opts = {}) {
     DRAFT:  "M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 14a2.25 2.25 0 1 1 0-4.5 2.25 2.25 0 0 1 0 4.5ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5ZM14 7.5a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm0-4.25a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Z",
     MERGED: "M5.45 5.154A4.25 4.25 0 0 0 9.25 7.5h1.378a2.251 2.251 0 1 1 0 1.5H9.25A5.734 5.734 0 0 1 5 7.123v3.505a2.25 2.25 0 1 1-1.5 0V5.372a2.25 2.25 0 1 1 1.95-.218ZM4.25 13.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm8.5-4.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5ZM5 3.25a.75.75 0 1 0 0 .005V3.25Z",
     CLOSED: "M3.25 1A2.25 2.25 0 0 1 4 5.372v5.256a2.251 2.251 0 1 1-1.5 0V5.372A2.251 2.251 0 0 1 3.25 1Zm9.5 5.5a.75.75 0 0 1 .75.75v3.378a2.251 2.251 0 1 1-1.5 0V7.25a.75.75 0 0 1 .75-.75Zm-2.03-5.273a.75.75 0 0 1 1.06 0l.97.97.97-.97a.748.748 0 0 1 1.265.332.75.75 0 0 1-.205.729l-.97.97.97.97a.751.751 0 0 1-.018 1.042.751.751 0 0 1-1.042.018l-.97-.97-.97.97a.749.749 0 0 1-1.275-.326.749.749 0 0 1 .215-.734l.97-.97-.97-.97a.75.75 0 0 1 0-1.06ZM2.5 3.25a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0ZM3.25 12a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm9.5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z",
+    // git-merge-queue (octicons are MIT like the rest).
+    QUEUED: "M3.75 4.5a1.25 1.25 0 1 0 0-2.5 1.25 1.25 0 0 0 0 2.5ZM3 7.75a.75.75 0 0 1 1.5 0v2.878a2.251 2.251 0 1 1-1.5 0Zm.75 5.75a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5Zm5-7.75a1.25 1.25 0 1 1-2.5 0 1.25 1.25 0 0 1 2.5 0Zm5.75 2.5a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-1.5 0a.75.75 0 1 0-1.5 0 .75.75 0 0 0 1.5 0Z",
     check:  "M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z",
     x:      "M3.72 3.72a.75.75 0 0 1 1.06 0L8 6.94l3.22-3.22a.749.749 0 0 1 1.275.326.749.749 0 0 1-.215.734L9.06 8l3.22 3.22a.749.749 0 0 1-.326 1.275.749.749 0 0 1-.734-.215L8 9.06l-3.22 3.22a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042L6.94 8 3.72 4.78a.75.75 0 0 1 0-1.06Z",
     dot:    "M8 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8Z",
@@ -124,6 +127,13 @@ function mount(root, opts = {}) {
     comment:"M1 2.75C1 1.784 1.784 1 2.75 1h10.5c.966 0 1.75.784 1.75 1.75v7.5A1.75 1.75 0 0 1 13.25 12H9.06l-2.573 2.573A1.458 1.458 0 0 1 4 13.543V12H2.75A1.75 1.75 0 0 1 1 10.25Zm1.75-.25a.25.25 0 0 0-.25.25v7.5c0 .138.112.25.25.25h2a.75.75 0 0 1 .75.75v2.19l2.72-2.72a.749.749 0 0 1 .53-.22h4.5a.25.25 0 0 0 .25-.25v-7.5a.25.25 0 0 0-.25-.25Z",
   };
   const STATE_COLOR = { OPEN: "var(--green)", DRAFT: "var(--gray)", MERGED: "var(--purple)", CLOSED: "var(--red)" };
+  // Merge-queue stage as pill text; a failed entry is the only red one.
+  function queuePill(q) {
+    const n = `queued #${q.position}`;
+    const text = { QUEUED: n, AWAITING_CHECKS: `${n} · checks running`, LOCKED: "merging…", UNMERGEABLE: "failed in queue",
+      MERGEABLE: q.position === 1 ? "merging next" : `${n} · ready` }[q.state] || n;
+    return `<span class="queued ${q.state === "UNMERGEABLE" ? "failed" : ""}" title="${esc(q.state.toLowerCase().replace(/_/g, " "))}">${text}</span>`;
+  }
   const svg = (path, color, size = 16) =>
     `<svg width="${size}" height="${size}" viewBox="0 0 16 16" fill="${color}"><path d="${path}"/></svg>`;
 
@@ -211,7 +221,7 @@ function mount(root, opts = {}) {
     if (by.length) sub.push(`<span class="warn">changes requested by ${by.map(esc).join(", ")}</span>`);
     else if (again.length) sub.push(`<span>re-review requested from ${again.map(esc).join(", ")}</span>`);
     if (p.conflicting) sub.push(`<span class="warn">conflicts</span>`);
-    if (p.queued) sub.push(`<span class="queued" title="${esc(p.queued.state.toLowerCase().replace(/_/g, " "))}">in merge queue #${p.queued.position}</span>`);
+    if (p.queued) sub.push(queuePill(p.queued));
     else if (landErrors.has(p.key)) sub.push(`<span class="warn">${esc(landErrors.get(p.key))}</span>`);
     else if (canLand(p)) {
       const busy = landBusy.has(p.key), sure = confirming === p.key;
@@ -231,7 +241,9 @@ function mount(root, opts = {}) {
       : `<span></span>`;
     const cls = (isDone(p) && tab !== "closed" ? " done" : "") + (!isDone(p) && by.length ? " changes" : "");
     return `<div class="row${cls}">
-      ${pick}<span title="${p.state.toLowerCase()}">${svg(P[p.state] || P.OPEN, STATE_COLOR[p.state])}</span>
+      ${pick}${p.queued
+        ? `<span title="in merge queue">${svg(P.QUEUED, "var(--purple)")}</span>`
+        : `<span title="${p.state.toLowerCase()}">${svg(P[p.state] || P.OPEN, STATE_COLOR[p.state])}</span>`}
       <div style="min-width:0">
         <a class="title" href="${esc(p.url)}" target="${target}" title="${esc(p.title + "\n" + p.head + " → " + p.base)}">${esc(p.title)}</a>
         <div class="sub">${sub.join("")}</div>
@@ -374,6 +386,14 @@ function mount(root, opts = {}) {
     // An open rename input survives the 30s redraws by leaving the list alone.
     if (editing?.drawn) return renderSelbar();
     const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
+    // PRs just out of the queue would otherwise vanish from Mine unseen. The
+    // cutoff is checked on every render, so the 30s redraw expires them.
+    if (tab === "mine" && (filter === "all" || filter === "queued")) {
+      const cutoff = Date.now() - 60 * 60 * 1000;
+      const merged = section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
+        .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
+      if (merged.length) cards.push(`<div class="card"><div class="bundle-head just-merged">${svg(P.MERGED, "currentColor", 12)}<span class="name">Just merged</span><span class="n">${merged.length}</span></div>${merged.map(p => row(p, new Set([p.key]))).join("")}</div>`);
+    }
     $("list").innerHTML = cards.join("") || `<div class="empty">Nothing here.</div>`;
     renderSelbar();
     if (editing) {
