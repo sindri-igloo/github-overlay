@@ -93,17 +93,34 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 		res := landResult{Key: key}
 		// The node id lives only in the snapshot, so a PR the page no longer
 		// has can't be landed.
-		var id, method string
+		var id, method, reason string
 		var queue bool
 		s.mu.RLock()
 		if s.snap != nil {
 			if p := s.snap.PRs[strings.ToLower(key)]; p != nil {
 				id, method, queue = p.ID, p.MergeMethod, p.MergeQueue
+				// The page checks this too, but the server is what acts with
+				// the token, and a direct merge can't be undone.
+				switch {
+				case p.State != "OPEN":
+					reason = "not open"
+				case p.ReviewDecision != "APPROVED":
+					reason = "not approved"
+				case p.Queued != nil:
+					reason = "already in the merge queue"
+				case !strings.EqualFold(p.Author, s.snap.Viewer):
+					reason = "not your pull request"
+				}
 			}
 		}
 		s.mu.RUnlock()
 		if id == "" {
 			res.Error = "not found"
+			results = append(results, res)
+			continue
+		}
+		if reason != "" {
+			res.Error = reason
 			results = append(results, res)
 			continue
 		}
