@@ -16,7 +16,7 @@ import (
 
 const prFragment = `
 fragment pr on PullRequest {
-  number title url isDraft state merged createdAt updatedAt closedAt mergedAt
+  id number title url isDraft state merged createdAt updatedAt closedAt mergedAt
   additions deletions mergeable reviewDecision body
   headRefName baseRefName
   author { login }
@@ -29,10 +29,7 @@ fragment pr on PullRequest {
     ... on Mannequin { login }
   } } }
   latestReviews(first: 20) { nodes { state author { __typename login } } }
-  reviewThreads(first: 50) { nodes {
-    isResolved
-    comments(first: 1) { nodes { author { __typename login } } }
-  } }
+  reviewThreads(first: 50) { nodes { isResolved } }
   commits(last: 1) { nodes { commit { statusCheckRollup {
     state
     contexts(first: 50) { nodes {
@@ -68,12 +65,29 @@ query($q: String!) {
   search(query: $q, type: ISSUE, first: 50) { nodes { ...pr } }
 }`
 
+// Thread authors only matter for PRs with open threads, and asking for them in
+// the section queries costs 25 of their 28 points, so they get their own query.
+const threadsQuery = `
+query($ids: [ID!]!) {
+  nodes(ids: $ids) { ... on PullRequest {
+    id
+    reviewThreads(first: 50) { nodes {
+      isResolved
+      comments(first: 1) { nodes { author { __typename login } } }
+    } }
+  } }
+}`
+
+// threadsChunk caps PRs per threadsQuery to keep its cost and runtime small.
+const threadsChunk = 20
+
 type actor struct {
 	Typename string `json:"__typename"`
 	Login    string `json:"login"`
 }
 
 type rawPR struct {
+	ID             string  `json:"id"`
 	Number         int     `json:"number"`
 	Title          string  `json:"title"`
 	URL            string  `json:"url"`
@@ -110,17 +124,8 @@ type rawPR struct {
 			Author *actor `json:"author"`
 		} `json:"nodes"`
 	} `json:"latestReviews"`
-	ReviewThreads struct {
-		Nodes []struct {
-			IsResolved bool `json:"isResolved"`
-			Comments   struct {
-				Nodes []struct {
-					Author *actor `json:"author"`
-				} `json:"nodes"`
-			} `json:"comments"`
-		} `json:"nodes"`
-	} `json:"reviewThreads"`
-	Commits struct {
+	ReviewThreads reviewThreads `json:"reviewThreads"`
+	Commits       struct {
 		Nodes []struct {
 			Commit struct {
 				StatusCheckRollup *struct {
@@ -151,6 +156,22 @@ type rawPR struct {
 	} `json:"timelineItems"`
 }
 
+type reviewThreads struct {
+	Nodes []struct {
+		IsResolved bool `json:"isResolved"`
+		Comments   struct {
+			Nodes []struct {
+				Author *actor `json:"author"`
+			} `json:"nodes"`
+		} `json:"comments"`
+	} `json:"nodes"`
+}
+
+type gqlError struct {
+	Type    string `json:"type"`
+	Message string `json:"message"`
+}
+
 type sectionResponse struct {
 	Data *struct {
 		Viewer    struct{ Login string } `json:"viewer"`
@@ -159,10 +180,17 @@ type sectionResponse struct {
 		} `json:"rateLimit"`
 		Search struct{ Nodes []rawPR } `json:"search"`
 	} `json:"data"`
-	Errors []struct {
-		Type    string `json:"type"`
-		Message string `json:"message"`
-	} `json:"errors"`
+	Errors []gqlError `json:"errors"`
+}
+
+type threadsResponse struct {
+	Data *struct {
+		Nodes []*struct {
+			ID            string        `json:"id"`
+			ReviewThreads reviewThreads `json:"reviewThreads"`
+		} `json:"nodes"`
+	} `json:"data"`
+	Errors []gqlError `json:"errors"`
 }
 
 type queryResult struct {
@@ -282,7 +310,54 @@ func (c *client) fetch(closedDays int) (*queryResult, error) {
 	if len(errs) > 0 {
 		return nil, errs[0]
 	}
+	if err := c.fetchThreads(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// fetchThreads fills in thread authors for open PRs with unresolved threads;
+// the same PR can be in both Mine and Review.
+func (c *client) fetchThreads(r *queryResult) error {
+	byID := map[string][]*rawPR{}
+	var ids []string
+	for _, sec := range [][]rawPR{r.Mine, r.Review} {
+		for i := range sec {
+			p := &sec[i]
+			open := false
+			for _, t := range p.ReviewThreads.Nodes {
+				open = open || !t.IsResolved
+			}
+			if !open || p.ID == "" {
+				continue
+			}
+			if byID[p.ID] == nil {
+				ids = append(ids, p.ID)
+			}
+			byID[p.ID] = append(byID[p.ID], p)
+		}
+	}
+	for len(ids) > 0 {
+		n := min(len(ids), threadsChunk)
+		var res threadsResponse
+		vars := map[string]any{"ids": ids[:n]}
+		if err := c.request("POST", "/graphql", map[string]any{"query": threadsQuery, "variables": vars}, &res); err != nil {
+			return err
+		}
+		if err := c.checkResponse(res.Errors, res.Data != nil); err != nil {
+			return err
+		}
+		for _, node := range res.Data.Nodes {
+			if node == nil {
+				continue
+			}
+			for _, p := range byID[node.ID] {
+				p.ReviewThreads = node.ReviewThreads
+			}
+		}
+		ids = ids[n:]
+	}
+	return nil
 }
 
 func (c *client) query(q, search string) (*sectionResponse, error) {
@@ -291,18 +366,26 @@ func (c *client) query(q, search string) (*sectionResponse, error) {
 	if err := c.request("POST", "/graphql", map[string]any{"query": q, "variables": vars}, &out); err != nil {
 		return nil, err
 	}
-	for _, e := range out.Errors {
-		if strings.HasPrefix(e.Type, "RATE_LIMIT") || strings.Contains(strings.ToLower(e.Message), "rate limit") {
-			return nil, c.rateLimited("")
-		}
-	}
-	if out.Data == nil {
-		if len(out.Errors) > 0 {
-			return nil, fmt.Errorf("github: %s", out.Errors[0].Message)
-		}
-		return nil, errors.New("github: empty response")
+	if err := c.checkResponse(out.Errors, out.Data != nil); err != nil {
+		return nil, err
 	}
 	return &out, nil
+}
+
+// checkResponse turns rate limiting, or errors with no data, into an error.
+func (c *client) checkResponse(errs []gqlError, hasData bool) error {
+	for _, e := range errs {
+		if strings.HasPrefix(e.Type, "RATE_LIMIT") || strings.Contains(strings.ToLower(e.Message), "rate limit") {
+			return c.rateLimited("")
+		}
+	}
+	if !hasData {
+		if len(errs) > 0 {
+			return fmt.Errorf("github: %s", errs[0].Message)
+		}
+		return errors.New("github: empty response")
+	}
+	return nil
 }
 
 // request calls the GitHub API, retrying once with a fresh gh token on 401.
