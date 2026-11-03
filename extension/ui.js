@@ -70,9 +70,9 @@ function mount(root, opts = {}) {
     all:     { label: "All", fn: () => true },
     action:  { label: "Needs action", fn: p => ciFailed(p) || changesBy(p).length > 0 || p.humanThreads > 0 || p.conflicting || p.queued?.state === "UNMERGEABLE" },
     waiting: { label: "Waiting on review", fn: p => p.requestedReviewers.length > 0 },
-    queued:  { label: "In merge queue", fn: p => !!p.queued },
     noRev:   { label: "No reviewer", fn: noReviewer },
-    ready:   { label: "Ready to merge", fn: p => p.reviewDecision === "APPROVED" && p.ci.state === "SUCCESS" && !p.conflicting && !p.humanThreads },
+    ready:   { label: "Ready to merge", fn: p => p.reviewDecision === "APPROVED" && p.ci.state === "SUCCESS" && !p.conflicting && !p.humanThreads && !p.queued },
+    merging: { label: "Merging", fn: p => !!p.queued },
     drafts:  { label: "Drafts", fn: p => p.state === "DRAFT" },
   };
 
@@ -388,7 +388,7 @@ function mount(root, opts = {}) {
     const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
     // PRs just out of the queue would otherwise vanish from Mine unseen. The
     // cutoff is checked on every render, so the 30s redraw expires them.
-    if (tab === "mine" && (filter === "all" || filter === "queued")) {
+    if (tab === "mine" && (filter === "all" || filter === "merging")) {
       const cutoff = Date.now() - 60 * 60 * 1000;
       const merged = section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
         .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
