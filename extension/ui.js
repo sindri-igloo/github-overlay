@@ -720,16 +720,17 @@ function mount(root, opts = {}) {
     }
     btn.classList.remove("spin");
     render();
+    eggs.loaded(force);
   }
 
   $("tabs").addEventListener("click", e => {
     const b = evt(e).closest("[data-tab]"); if (!b) return;
     if (b.dataset.tab !== tab) selectedPRs.clear();
-    tab = b.dataset.tab; store.set("tab", tab); render();
+    tab = b.dataset.tab; store.set("tab", tab); render(); eggs.switched();
   });
   $("filters").addEventListener("click", e => {
     const b = evt(e).closest("[data-filter]"); if (!b) return;
-    filter = b.dataset.filter; store.set("filter", filter); render();
+    filter = b.dataset.filter; store.set("filter", filter); render(); eggs.switched();
   });
   $("orgs").addEventListener("click", e => {
     const b = evt(e).closest("[data-org]"); if (!b) return;
@@ -765,6 +766,80 @@ function mount(root, opts = {}) {
   on(document, "keydown", e => {
     if (e.key === "r" && !e.metaKey && !e.ctrlKey && !picker && evt(e) === document.body) load(true);
   });
+
+  // ---- Easter eggs. Rare on purpose; ?egg=wave|roll|tumbleweed|disco shows one.
+
+  const eggs = (() => {
+    const chance = n => Math.random() < 1 / n;
+    const calm = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let shown = new URLSearchParams(location.search).get("egg");
+
+    function toast(text) {
+      const el = document.createElement("div");
+      el.className = "egg-toast";
+      el.textContent = text;
+      root.appendChild(el);
+      setTimeout(() => el.remove(), 2500);
+    }
+
+    // Rows bob up one after another, top to bottom.
+    function wave() {
+      const rows = root.querySelectorAll(".row");
+      rows.forEach((r, i) => r.style.setProperty("--i", i));
+      $("list").classList.add("wave");
+      setTimeout(() => $("list").classList.remove("wave"), 600 + rows.length * 40);
+    }
+
+    function roll() {
+      $("list").classList.add("roll");
+      toast("do a barrel roll");
+      setTimeout(() => $("list").classList.remove("roll"), 1100);
+    }
+
+    // A tumbleweed crosses a PR nobody has touched in two weeks.
+    function tumbleweed() {
+      const stale = [...root.querySelectorAll(".row")].filter(r => /^(1[4-9]|[2-9]\d|\d{3,})d$/.test(r.querySelector(".age")?.textContent));
+      const row = stale[Math.floor(Math.random() * stale.length)];
+      if (!row) return;
+      const el = document.createElement("span");
+      el.className = "tumbleweed";
+      el.style.setProperty("--dist", row.offsetWidth + 32 + "px");
+      el.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#b08850" stroke-width="1.4" stroke-linecap="round">
+        <circle cx="12" cy="12" r="9"/><path d="M5 9c4 1 9-3 14 1M4 14c5-2 11 2 16-1M8 4c1 5-2 11 2 16M15 4c-2 5 2 11-1 16M6 18c3-4 9-8 12-12"/></svg>`;
+      row.appendChild(el);
+      setTimeout(() => el.remove(), 2600);
+    }
+
+    // Avatar rings and connected cards party for ten seconds.
+    function disco() {
+      if (root.classList.contains("disco")) return;
+      root.classList.add("disco");
+      toast("🕺 disco mode");
+      setTimeout(() => root.classList.remove("disco"), 10000);
+    }
+
+    const all = { wave, roll, tumbleweed, disco };
+    const KONAMI = ["ArrowUp", "ArrowUp", "ArrowDown", "ArrowDown", "ArrowLeft", "ArrowRight", "ArrowLeft", "ArrowRight", "b", "a"];
+    let pos = 0;
+    on(document, "keydown", e => {
+      if (/^(INPUT|TEXTAREA|SELECT)$/.test(evt(e).tagName)) return;
+      pos = e.key === KONAMI[pos] ? pos + 1 : e.key === KONAMI[0] ? 1 : 0;
+      if (pos === KONAMI.length) { pos = 0; if (!calm()) disco(); }
+    });
+
+    return {
+      loaded(force) {
+        if (calm() || !data?.fetchedAt) return;
+        if (shown && all[shown]) { all[shown](); shown = null; return; }
+        if (!force) return;
+        if (chance(50)) roll();
+        else if (chance(30)) wave();
+      },
+      switched() {
+        if (!calm() && chance(20)) tumbleweed();
+      },
+    };
+  })();
 
   load();
   // A hidden tab stops asking, so the server sees nobody looking and stops

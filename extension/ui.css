@@ -170,3 +170,27 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   .row .cell.thr, .row .cell.age { grid-row: 2; }
   .title { white-space: normal; }
 }
+
+/* Easter eggs (see eggs in ui.js). */
+@keyframes egg-wave { 0%, 100% { transform: none; } 40% { transform: translateY(-6px); } }
+.list.wave .row { animation: egg-wave .5s ease-in-out both; animation-delay: calc(var(--i, 0) * 40ms); }
+@keyframes egg-roll { to { transform: rotate(360deg); } }
+.list.roll { animation: egg-roll 1s ease-in-out; }
+.row { position: relative; }
+.tumbleweed { position: absolute; left: 0; top: 50%; margin-top: -12px; pointer-events: none;
+  animation: egg-cross 2.4s linear forwards; }
+.tumbleweed svg { animation: egg-tumble 2.4s linear forwards; }
+@keyframes egg-cross { from { transform: translateX(-32px); } to { transform: translateX(var(--dist)); } }
+@keyframes egg-tumble {
+  0% { transform: translateY(0) rotate(0); } 25% { transform: translateY(-8px) rotate(225deg); }
+  50% { transform: translateY(0) rotate(450deg); } 75% { transform: translateY(-5px) rotate(675deg); }
+  100% { transform: translateY(0) rotate(900deg); }
+}
+.gho.disco .av { animation: egg-hue 1s linear infinite; }
+.gho.disco .bundle { animation: egg-pulse .5s ease-in-out infinite alternate; }
+@keyframes egg-hue { to { filter: hue-rotate(360deg); } }
+@keyframes egg-pulse { to { box-shadow: 0 0 14px var(--purple); } }
+.egg-toast { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 12; padding: 6px 12px;
+  border-radius: 6px; background: var(--fg); color: var(--bg); font-size: 13px; pointer-events: none;
+  animation: egg-toast 2.5s ease forwards; }
+@keyframes egg-toast { 0% { opacity: 0; } 10%, 80% { opacity: 1; } 100% { opacity: 0; } }
