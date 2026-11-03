@@ -578,10 +578,14 @@ async function load(force) {
   if (force) btn.classList.add("spin");
   try {
     const r = await api("/api/prs" + (force ? "?refresh=1" : ""));
+    if (!r.ok) {
+      // A 403 here means this tab's code is older than the server's.
+      throw new Error(r.status === 403 ? "the server was updated; reload this page" : `HTTP ${r.status}`);
+    }
     data = await r.json();
   } catch (e) {
     data = data || { prs: {}, sections: {}, bundles: {} };
-    data.error = "Overlay server unreachable: " + e.message;
+    data.error = e instanceof TypeError ? "Overlay server unreachable" : "Overlay: " + e.message;
   }
   btn.classList.remove("spin");
   render();

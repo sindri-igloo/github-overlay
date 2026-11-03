@@ -71,6 +71,9 @@ func (s *server) refresh(minAge time.Duration) {
 		return
 	}
 
+	left, _ := s.client.budget()
+	log.Printf("refreshed (%d GraphQL points left this hour)", left)
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.fetchedAt = time.Now()
