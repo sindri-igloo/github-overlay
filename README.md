@@ -50,9 +50,10 @@ The PID file and log are kept in `~/Library/Caches/github-overlay/`.
 - **To review**: open PRs where you or one of your teams is a requested reviewer.
 - **Closed**: your PRs merged or closed in the last `-closed-days` days.
 
-Each row shows CI (hover for failing checks), reviewer avatars ringed by
-state (dotted yellow requested, green approved, red changes requested, gray
-commented), unresolved threads (people in red, bots as a gray `+N`), and age.
+Each row shows CI (hover for failing checks), reviewer avatars ringed and
+badged by state (dotted yellow requested, green approved, red changes requested,
+gray commented; a PR with changes requested gets a red edge and names who asked,
+until they are asked to review again), unresolved threads (people in red, bots as a gray `+N`), and age.
 Press `r` to refresh.
 
 ## Connected PRs
