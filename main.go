@@ -161,7 +161,7 @@ type serveOpts struct {
 func serveFlags(fs *flag.FlagSet) *serveOpts {
 	o := &serveOpts{}
 	fs.StringVar(&o.addr, "addr", "prs.localhost:7777", "listen address")
-	fs.DurationVar(&o.interval, "interval", 5*time.Minute, "GitHub poll interval while the page is open")
+	fs.DurationVar(&o.interval, "interval", time.Minute, "GitHub poll interval while the page is open")
 	fs.IntVar(&o.closedDays, "closed-days", 7, "show PRs merged/closed in the last N days")
 	fs.StringVar(&o.bots, "bots", "igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer",
 		"comma-separated logins to treat as bots (in addition to GitHub App accounts)")
