@@ -337,10 +337,16 @@ function mount(root, opts = {}) {
     ).join("");
 
     const prs = section(tab);
+    // PRs just out of the queue would otherwise vanish from Mine unseen; they
+    // show under Merging, and the 30s redraw expires them.
+    const cutoff = Date.now() - 60 * 60 * 1000;
+    const justMerged = section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
+      .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
     const useFilters = tab === "mine";
     $("filters").innerHTML = useFilters ? Object.entries(FILTERS).map(([id, f]) => {
       const n = prs.filter(f.fn).length;
-      if (!n && id !== filter && id !== "all") return "";
+      // Merging stays reachable while only just-merged PRs are left to show.
+      if (!n && id !== filter && id !== "all" && !(id === "merging" && justMerged.length)) return "";
       return `<button class="chip ${id === filter ? "active" : ""}" data-filter="${id}">${f.label}${id === "all" ? "" : `<span class="n">${n}</span>`}</button>`;
     }).join("") : "";
 
@@ -386,13 +392,9 @@ function mount(root, opts = {}) {
     // An open rename input survives the 30s redraws by leaving the list alone.
     if (editing?.drawn) return renderSelbar();
     const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
-    // PRs just out of the queue would otherwise vanish from Mine unseen. The
-    // cutoff is checked on every render, so the 30s redraw expires them.
-    if (tab === "mine" && filter === "merging") {
-      const cutoff = Date.now() - 60 * 60 * 1000;
-      const merged = section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
-        .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
-      if (merged.length) cards.push(`<div class="card"><div class="bundle-head just-merged">${svg(P.MERGED, "currentColor", 12)}<span class="name">Just merged</span><span class="n">${merged.length}</span></div>${merged.map(p => row(p, new Set([p.key]))).join("")}</div>`);
+    if (tab === "mine" && filter === "merging" && justMerged.length) {
+      const merged = justMerged;
+      cards.push(`<div class="card"><div class="bundle-head just-merged">${svg(P.MERGED, "currentColor", 12)}<span class="name">Just merged</span><span class="n">${merged.length}</span></div>${merged.map(p => row(p, new Set([p.key]))).join("")}</div>`);
     }
     $("list").innerHTML = cards.join("") || `<div class="empty">Nothing here.</div>`;
     renderSelbar();
