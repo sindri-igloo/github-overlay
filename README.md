@@ -67,6 +67,9 @@ gray commented; a PR with changes requested gets a red edge and names who asked,
 until they are asked to review again), unresolved threads (people in red, bots as a gray `+N`), and age.
 Press `r` to refresh.
 
+When your PRs span more than one owner, chips next to the title narrow every
+tab to the orgs you pick. The choice is remembered in the browser.
+
 ## Connected PRs
 
 Unconnected PRs share one box at the top; below it, open PRs are grouped when one references another, either in its description
