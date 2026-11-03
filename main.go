@@ -27,6 +27,7 @@ type server struct {
 	closedDays int
 
 	candidates candidateCache
+	groups     *groupStore
 
 	fetchMu sync.Mutex // serializes fetches
 	mu      sync.RWMutex
@@ -129,7 +130,14 @@ func (s *server) handlePRs(w http.ResponseWriter, r *http.Request) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(s.snap)
+	if s.snap == nil {
+		json.NewEncoder(w).Encode(s.snap)
+		return
+	}
+	json.NewEncoder(w).Encode(struct {
+		*Snapshot
+		GroupNames []groupName `json:"groupNames"`
+	}{s.snap, s.groups.list()})
 }
 
 type serveOpts struct {
@@ -213,12 +221,13 @@ func serve(o *serveOpts, pidFile bool) error {
 		}
 	}
 	s := &server{client: newClient(), bots: botSet, closedDays: o.closedDays, interval: o.interval,
-		candidates: candidateCache{entries: map[string]cachedCandidates{}}}
+		candidates: candidateCache{entries: map[string]cachedCandidates{}}, groups: loadGroups()}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/prs", guard(s.handlePRs))
 	mux.HandleFunc("GET /api/reviewers", guard(s.handleCandidates))
 	mux.HandleFunc("POST /api/reviewers", guard(s.handleSetReviewers))
+	mux.HandleFunc("PUT /api/groups", guard(s.handleSetGroup))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
