@@ -16,9 +16,9 @@ const TEMPLATE = `<div class="wrap">
     <span class="meta" id="meta"></span>
     <button class="iconbtn" id="split" title="Side by side" aria-pressed="false">⇆</button>
     <button class="iconbtn" id="refresh" title="Refresh now (r)">↻</button>
-    <button class="iconbtn" id="settings-btn" title="Settings" aria-expanded="false">⚙</button>
+    <button class="iconbtn" id="settings-btn" title="Settings" aria-expanded="false" aria-controls="settings">⚙</button>
+    <div class="settings" id="settings" role="dialog" aria-label="Settings" hidden></div>
   </header>
-  <div class="settings" id="settings" hidden></div>
   <div id="error"></div>
   <div class="bar">
     <nav class="tabs" id="tabs"></nav>
@@ -890,15 +890,25 @@ function mount(root, opts = {}) {
   });
   $("refresh").addEventListener("click", () => load(true));
 
-  // ---- Settings: the opt-in Claude features, saved by the server.
+  // ---- Settings: the opt-in Claude features, saved by the server. The panel
+  // hangs under the gear, over the page, and closes on Escape or a click
+  // outside it.
 
   let settings = null;
+  let draft = null; // unapplied "How to group" text; kept while the panel is closed
+
+  const settingsOpen = () => !$("settings").hidden;
+
+  function closeSettings() {
+    $("settings").hidden = true;
+    $("settings-btn").setAttribute("aria-expanded", "false");
+  }
 
   async function toggleSettings() {
-    const panel = $("settings"), show = panel.hidden;
-    panel.hidden = !show;
-    $("settings-btn").setAttribute("aria-expanded", show);
-    if (!show) return;
+    if (settingsOpen()) return closeSettings();
+    const panel = $("settings");
+    panel.hidden = false;
+    $("settings-btn").setAttribute("aria-expanded", "true");
     panel.innerHTML = `<p class="settings-note">Loading settings…</p>`;
     try {
       const r = await api("/api/settings");
@@ -913,6 +923,7 @@ function mount(root, opts = {}) {
 
   function drawSettings(error = "") {
     const s = settings, off = !s.claude ? "disabled" : "";
+    const text = draft ?? s.groupingPrompt;
     const toggle = (key, label, help) => `<label class="setting">
         <input type="checkbox" data-setting="${key}" ${s[key] ? "checked" : ""} ${off}>
         <span><b>${label}</b><small>${help}</small></span>
@@ -926,9 +937,12 @@ function mount(root, opts = {}) {
         : `The Claude Code CLI wasn't found. Install it, log in, and restart the overlay server to use these.`}</p>
       ${toggle("claudeGrouping", "Group related PRs", "Groups open PRs by the piece of work they belong to, using links between them as hints. PRs Claude hasn't seen yet keep their links.")}
       <div class="setting prompt">
-        <label for="grouping-prompt"><b>How to group</b><small>Claude follows this when grouping. Changing it regroups your PRs.</small></label>
-        <textarea id="grouping-prompt" data-setting="groupingPrompt" rows="3" maxlength="2000" ${off}>${esc(s.groupingPrompt)}</textarea>
-        <button type="button" class="btn" data-reset-prompt ${off || s.groupingPrompt === s.defaultGroupingPrompt ? "disabled" : ""}>Reset to default</button>
+        <label for="grouping-prompt"><b>How to group</b><small>The instruction Claude groups by. Apply regroups your PRs.</small></label>
+        <textarea id="grouping-prompt" rows="4" maxlength="2000" ${off}>${esc(text)}</textarea>
+        <div class="prompt-actions">
+          <button type="button" class="btn" id="reset-prompt" title="Put the default instruction in the box">Reset to default</button>
+          <button type="button" class="btn primary" id="apply-prompt" title="Apply (⌘/Ctrl+Enter)">Apply</button>
+        </div>
       </div>
       ${toggle("claudeTitles", "Title groups", "Names each group after what it delivers instead of its scopes. Names you set by hand still win.")}
       <label class="setting model">Model
@@ -936,17 +950,27 @@ function mount(root, opts = {}) {
           `<option ${m === s.claudeModel ? "selected" : ""}>${esc(m)}</option>`).join("")}</select>
       </label>
       ${error ? `<div class="error">⚠ ${esc(error)}</div>` : ""}`;
+    syncPromptButtons();
   }
 
-  async function saveSetting(el) {
+  // Apply is live only when the box differs from what's saved; Reset only
+  // when the box isn't the default already.
+  function syncPromptButtons() {
+    const box = $("grouping-prompt"), off = !settings.claude;
+    if (!box) return;
+    $("apply-prompt").disabled = off || box.value.trim() === settings.groupingPrompt;
+    $("reset-prompt").disabled = off || box.value.trim() === settings.defaultGroupingPrompt;
+  }
+
+  async function saveSettings(change) {
     const next = { claudeGrouping: settings.claudeGrouping, claudeTitles: settings.claudeTitles,
-      claudeModel: settings.claudeModel, groupingPrompt: settings.groupingPrompt };
-    next[el.dataset.setting] = el.type === "checkbox" ? el.checked : el.value;
+      claudeModel: settings.claudeModel, groupingPrompt: settings.groupingPrompt, ...change };
     try {
       const r = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || r.statusText);
       settings = body;
+      if ("groupingPrompt" in change) draft = null;
       drawSettings();
       load(); // turning a feature off applies at once
     } catch (e) {
@@ -954,20 +978,44 @@ function mount(root, opts = {}) {
     }
   }
 
+  function applyPrompt() {
+    const box = $("grouping-prompt");
+    if (box && !$("apply-prompt").disabled) saveSettings({ groupingPrompt: box.value });
+  }
+
   $("settings-btn").addEventListener("click", toggleSettings);
   $("settings").addEventListener("change", e => {
     const el = evt(e).closest("[data-setting]");
-    if (el) saveSetting(el);
+    if (el) saveSettings({ [el.dataset.setting]: el.type === "checkbox" ? el.checked : el.value });
+  });
+  $("settings").addEventListener("input", e => {
+    if (evt(e).id !== "grouping-prompt") return;
+    draft = evt(e).value;
+    syncPromptButtons();
   });
   $("settings").addEventListener("click", e => {
-    if (!evt(e).closest("[data-reset-prompt]")) return;
-    const box = $("grouping-prompt");
-    box.value = settings.defaultGroupingPrompt;
-    saveSetting(box);
+    const t = evt(e);
+    if (t.closest("#apply-prompt")) applyPrompt();
+    if (t.closest("#reset-prompt")) {
+      const box = $("grouping-prompt");
+      box.value = draft = settings.defaultGroupingPrompt;
+      syncPromptButtons();
+      box.focus();
+    }
   });
-  // Typing in the panel shouldn't reach the host page's shortcuts (GitHub's,
-  // in the extension) or this page's own keys.
-  $("settings").addEventListener("keydown", e => e.stopPropagation());
+  // Keys typed in the panel stay in it, so they don't reach the host page's
+  // shortcuts (GitHub's, in the extension) or this page's own keys.
+  $("settings").addEventListener("keydown", e => {
+    e.stopPropagation();
+    if (e.key === "Escape") { closeSettings(); $("settings-btn").focus(); }
+    else if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && evt(e).id === "grouping-prompt") { e.preventDefault(); applyPrompt(); }
+  });
+  on(document, "keydown", e => { if (e.key === "Escape" && settingsOpen()) closeSettings(); });
+  on(document, "click", e => {
+    if (!settingsOpen()) return;
+    const path = e.composedPath();
+    if (!path.includes($("settings")) && !path.includes($("settings-btn"))) closeSettings();
+  });
   $("list").addEventListener("click", e => {
     const n = evt(e).closest("[data-rename]");
     if (n) {
