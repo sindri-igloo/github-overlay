@@ -27,6 +27,8 @@ type CI struct {
 
 type PR struct {
 	Key                string   `json:"key"` // owner/repo#123
+	ID                 string   `json:"-"`   // GraphQL node id, for mutations
+	MergeMethod        string   `json:"-"`   // SQUASH, MERGE or REBASE: what the repo allows, in that order of preference
 	Number             int      `json:"number"`
 	Title              string   `json:"title"`
 	URL                string   `json:"url"`
@@ -51,6 +53,9 @@ type PR struct {
 	Links              []string `json:"links"`        // keys of PRs referenced from/to this one
 	Bundle             int      `json:"bundle"`       // group of open PRs and what they link to
 	ClosedBundle       int      `json:"closedBundle"` // group of closed PRs linked to each other
+
+	MergeQueue bool        `json:"mergeQueue"` // the base branch has a merge queue
+	Queued     *queueEntry `json:"queued"`     // null when not in the queue
 }
 
 type Snapshot struct {
@@ -105,6 +110,7 @@ func isBot(a *actor, bots map[string]bool) bool {
 func convert(r rawPR, bots, repos map[string]bool) *PR {
 	p := &PR{
 		Key:       refKey(r.Repository.NameWithOwner, strconv.Itoa(r.Number)),
+		ID:        r.ID,
 		Number:    r.Number,
 		Title:     r.Title,
 		URL:       r.URL,
@@ -126,6 +132,16 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 	if r.ClosedAt != nil {
 		p.ClosedAt = *r.ClosedAt
 	}
+	switch repo := r.Repository; {
+	case repo.SquashMergeAllowed:
+		p.MergeMethod = "SQUASH"
+	case repo.MergeCommitAllowed:
+		p.MergeMethod = "MERGE"
+	case repo.RebaseMergeAllowed:
+		p.MergeMethod = "REBASE"
+	}
+	p.MergeQueue = r.IsMergeQueueEnabled
+	p.Queued = r.MergeQueueEntry
 	p.Conflicting = r.Mergeable == "CONFLICTING"
 	if r.ReviewDecision != nil {
 		p.ReviewDecision = *r.ReviewDecision

@@ -57,7 +57,9 @@ The PID file and log are kept in `~/Library/Caches/github-overlay/`.
 
 - **Mine**: your open PRs and drafts, filterable by needs action, waiting on
   review, no reviewer, ready to merge, and drafts. Tick rows (or a connected group's Select) to request
-  reviewers on several PRs at once.
+  reviewers on several PRs at once. Approved PRs can be added to the merge
+  queue, or merged where the repo has none, per row or for the selected PRs
+  (merging asks for a second click).
 - **To review**: open PRs where you or one of your teams is a requested reviewer.
 - **Closed**: your PRs merged or closed in the last `-closed-days` days.
 

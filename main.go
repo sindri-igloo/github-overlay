@@ -228,6 +228,7 @@ func serve(o *serveOpts, pidFile bool) error {
 	mux.HandleFunc("GET /api/prs", guard(s.handlePRs))
 	mux.HandleFunc("GET /api/reviewers", guard(s.handleCandidates))
 	mux.HandleFunc("POST /api/reviewers", guard(s.handleSetReviewers))
+	mux.HandleFunc("POST /api/land", guard(s.handleLand))
 	mux.HandleFunc("PUT /api/groups", guard(s.handleSetGroup))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { fmt.Fprintln(w, "ok") })
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
