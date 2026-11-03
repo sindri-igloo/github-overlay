@@ -236,6 +236,7 @@ func serve(o *serveOpts, pidFile bool) error {
 	mux.HandleFunc("GET /api/prs", guard(s.handlePRs))
 	mux.HandleFunc("GET /api/reviewers", guard(s.handleCandidates))
 	mux.HandleFunc("POST /api/reviewers", guard(s.handleSetReviewers))
+	mux.HandleFunc("POST /api/land", guard(s.handleLand))
 	mux.HandleFunc("PUT /api/groups", guard(s.handleSetGroup))
 	mux.HandleFunc("GET /ui.js", asset(uiJS, "text/javascript; charset=utf-8"))
 	mux.HandleFunc("GET /ui.css", asset(uiCSS, "text/css; charset=utf-8"))

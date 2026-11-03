@@ -18,9 +18,10 @@ const prFragment = `
 fragment pr on PullRequest {
   id number title url isDraft state merged createdAt updatedAt closedAt mergedAt
   additions deletions mergeable reviewDecision body
+  isMergeQueueEnabled isInMergeQueue mergeQueueEntry { position state }
   headRefName baseRefName
   author { login }
-  repository { nameWithOwner }
+  repository { nameWithOwner squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed }
   reviewRequests(first: 20) { nodes { requestedReviewer {
     __typename
     ... on User { login }
@@ -88,6 +89,11 @@ type actor struct {
 	Login    string `json:"login"`
 }
 
+type queueEntry struct {
+	Position int    `json:"position"`
+	State    string `json:"state"` // QUEUED, AWAITING_CHECKS, MERGEABLE, UNMERGEABLE, LOCKED
+}
+
 type rawPR struct {
 	ID             string  `json:"id"`
 	Number         int     `json:"number"`
@@ -108,8 +114,15 @@ type rawPR struct {
 	HeadRefName    string  `json:"headRefName"`
 	BaseRefName    string  `json:"baseRefName"`
 	Author         *actor  `json:"author"`
-	Repository     struct {
-		NameWithOwner string `json:"nameWithOwner"`
+
+	IsMergeQueueEnabled bool        `json:"isMergeQueueEnabled"`
+	MergeQueueEntry     *queueEntry `json:"mergeQueueEntry"` // null when not queued
+
+	Repository struct {
+		NameWithOwner      string `json:"nameWithOwner"`
+		SquashMergeAllowed bool   `json:"squashMergeAllowed"`
+		MergeCommitAllowed bool   `json:"mergeCommitAllowed"`
+		RebaseMergeAllowed bool   `json:"rebaseMergeAllowed"`
 	} `json:"repository"`
 	ReviewRequests struct {
 		Nodes []struct {
