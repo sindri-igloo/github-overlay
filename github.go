@@ -61,7 +61,7 @@ fragment pr on PullRequest {
 const sectionQuery = `
 query($q: String!) {
   viewer { login }
-  rateLimit { remaining }
+  rateLimit { remaining cost }
   search(query: $q, type: ISSUE, first: 50) { nodes { ...pr } }
 }`
 
@@ -69,6 +69,7 @@ query($q: String!) {
 // the section queries costs 25 of their 28 points, so they get their own query.
 const threadsQuery = `
 query($ids: [ID!]!) {
+  rateLimit { cost }
   nodes(ids: $ids) { ... on PullRequest {
     id
     reviewThreads(first: 50) { nodes {
@@ -177,6 +178,7 @@ type sectionResponse struct {
 		Viewer    struct{ Login string } `json:"viewer"`
 		RateLimit struct {
 			Remaining int `json:"remaining"`
+			Cost      int `json:"cost"`
 		} `json:"rateLimit"`
 		Search struct{ Nodes []rawPR } `json:"search"`
 	} `json:"data"`
@@ -185,6 +187,9 @@ type sectionResponse struct {
 
 type threadsResponse struct {
 	Data *struct {
+		RateLimit struct {
+			Cost int `json:"cost"`
+		} `json:"rateLimit"`
 		Nodes []*struct {
 			ID            string        `json:"id"`
 			ReviewThreads reviewThreads `json:"reviewThreads"`
@@ -196,6 +201,7 @@ type threadsResponse struct {
 type queryResult struct {
 	Viewer        string
 	RateRemaining int
+	Cost          int // GraphQL points this refresh spent, as GitHub reports each query's own cost
 	Mine          []rawPR
 	Review        []rawPR
 	Closed        []rawPR
@@ -298,6 +304,7 @@ func (c *client) fetch(closedDays int) (*queryResult, error) {
 			}
 			*s.dst = res.Data.Search.Nodes
 			out.Viewer = res.Data.Viewer.Login
+			out.Cost += res.Data.RateLimit.Cost
 			if out.RateRemaining == 0 || res.Data.RateLimit.Remaining < out.RateRemaining {
 				out.RateRemaining = res.Data.RateLimit.Remaining
 			}
@@ -347,6 +354,7 @@ func (c *client) fetchThreads(r *queryResult) error {
 		if err := c.checkResponse(res.Errors, res.Data != nil); err != nil {
 			return err
 		}
+		r.Cost += res.Data.RateLimit.Cost
 		for _, node := range res.Data.Nodes {
 			if node == nil {
 				continue
