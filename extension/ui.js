@@ -221,7 +221,7 @@ function mount(root, opts = {}) {
     if (by.length) sub.push(`<span class="warn">changes requested by ${by.map(esc).join(", ")}</span>`);
     else if (again.length) sub.push(`<span>re-review requested from ${again.map(esc).join(", ")}</span>`);
     if (p.conflicting) sub.push(`<span class="warn">conflicts</span>`);
-    if (p.queued) sub.push(queuePill(p.queued));
+    if (p.queued) sub.push(`<span>${queuePill(p.queued)}</span>`); // wrapped so the "·" separator stays outside the pill
     else if (landErrors.has(p.key)) sub.push(`<span class="warn">${esc(landErrors.get(p.key))}</span>`);
     else if (canLand(p)) {
       const busy = landBusy.has(p.key), sure = confirming === p.key;
