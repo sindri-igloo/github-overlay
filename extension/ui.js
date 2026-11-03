@@ -429,7 +429,19 @@ function mount(root, opts = {}) {
     if (sid === "mine" && filter === "merging" && merged.length) {
       cards.push(`<div class="card"><div class="bundle-head just-merged">${svg(P.MERGED, "currentColor", 12)}<span class="name">Just merged</span><span class="n">${merged.length}</span></div>${merged.map(p => row(p, new Set([p.key]), sid)).join("")}</div>`);
     }
-    return { html: cards.join("") || `<div class="empty">Nothing here.</div>`, shown };
+    return { html: cards.join("") || emptyState(sid), shown };
+  }
+
+  // Saved filters can combine to hide everything; say which one and offer a way out.
+  function emptyState(sid) {
+    const n = section(sid).length;
+    let msg = "Nothing here.";
+    if (sid === "mine" && filter !== "all" && n) {
+      msg = `None of these ${n} PRs are “${esc(FILTERS[filter].label)}”. <button data-filter="all">Show all</button>`;
+    } else if (orgs.size && (data.sections[sid] || []).length) {
+      msg = `Nothing from ${esc([...orgs].join(", "))} here. <button data-org="">Show all orgs</button>`;
+    }
+    return `<div class="empty">${msg}</div>`;
   }
 
   function renderSelbar() {
@@ -856,17 +868,20 @@ function mount(root, opts = {}) {
     if (b.dataset.tab !== tab && !(split && tab !== "closed" && b.dataset.tab !== "closed")) selectedPRs.clear();
     tab = b.dataset.tab; store.set("tab", tab); render(); motion.afterSwitch();
   });
-  $("filters").addEventListener("click", e => {
+  const pickFilter = e => {
     const b = evt(e).closest("[data-filter]"); if (!b) return;
     filter = b.dataset.filter; store.set("filter", filter); render(); motion.afterSwitch();
-  });
-  $("orgs").addEventListener("click", e => {
+  };
+  const pickOrg = e => {
     const b = evt(e).closest("[data-org]"); if (!b) return;
     const o = b.dataset.org;
     if (!o) orgs.clear(); else orgs.has(o) ? orgs.delete(o) : orgs.add(o);
     store.set("orgs", JSON.stringify([...orgs]));
     render();
-  });
+  };
+  // The list's empty state carries the same buttons.
+  for (const id of ["filters", "list"]) $(id).addEventListener("click", pickFilter);
+  for (const id of ["orgs", "list"]) $(id).addEventListener("click", pickOrg);
   $("split").addEventListener("click", () => {
     split = !split; store.set("split", split ? "1" : "0"); render(); motion.afterSwitch();
   });

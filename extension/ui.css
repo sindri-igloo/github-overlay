@@ -66,6 +66,8 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .card > * + * { border-top: 1px solid var(--border-muted); }
 .empty { padding: 32px; text-align: center; color: var(--fg-muted); border: 1px dashed var(--border); border-radius: 6px; }
+.empty button { font: inherit; color: var(--link); background: none; border: none; padding: 0; cursor: pointer; }
+.empty button:hover { text-decoration: underline; }
 
 .row { padding: 8px 12px; }
 .row:hover { background: var(--bg-subtle); }
