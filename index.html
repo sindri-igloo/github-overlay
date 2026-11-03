@@ -52,8 +52,8 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .chip:hover { background: var(--bg-subtle); color: var(--fg); }
 .chip.active { background: var(--blue-bg); color: var(--link); }
 
-.cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 104px 48px 40px; gap: 0 12px; align-items: center; }
-.sel .cols, .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) 24px 104px 48px 40px; }
+.cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 120px 48px 40px; gap: 0 12px; align-items: center; }
+.sel .cols, .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) 24px 120px 48px 40px; }
 .cols .selcol { display: none; } .sel .cols .selcol { display: block; }
 .rowsel { margin: 0; accent-color: var(--link); cursor: pointer; }
 .cols { padding: 0 12px 4px; font-size: 11px; color: var(--fg-muted); }
@@ -79,6 +79,7 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
   border: none; padding: 0 2px; cursor: pointer; }
 .bundle-head .toggle:hover { text-decoration: underline; }
 .bundle-head .toggle ~ .toggle { margin-left: 8px; }
+.row.changes { box-shadow: inset 3px 0 0 var(--red); }
 .row.done { background: var(--bg-subtle); }
 .row.done .title { font-weight: 400; color: var(--fg-muted); }
 
@@ -92,18 +93,23 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .cell.age { justify-content: flex-end; }
 
 .avatars { display: flex; justify-content: center; }
-.av { position: relative; width: 22px; height: 22px; border-radius: 50%; margin-left: -4px; flex: none;
+.av { position: relative; width: 22px; height: 22px; border-radius: 50%; margin-left: 2px; flex: none;
   background: var(--gray-bg) center/cover; box-shadow: 0 0 0 2px var(--bg);
   display: grid; place-items: center; font-size: 10px; font-weight: 600; color: var(--fg-muted); }
 .av:first-child { margin-left: 0; }
 .av img { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 50%; }
-.av::after { content: ""; position: absolute; inset: -2px; border-radius: 50%; border: 2px solid var(--ring, transparent); }
+.av::after { content: ""; position: absolute; inset: -2.5px; border-radius: 50%; border: 2.5px solid var(--ring, transparent); }
 .av.requested { --ring: var(--yellow); } .av.requested::after { border-style: dotted; }
 .av.approved { --ring: var(--green); }
 .av.changes { --ring: var(--red); }
 .av.commented { --ring: var(--gray); }
+/* Status badge: the ring alone is hard to tell apart at this size. */
+.badge { position: absolute; right: -3px; bottom: -3px; z-index: 1; width: 12px; height: 12px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--ring); box-shadow: 0 0 0 1.5px var(--bg); }
+.av.requested .badge svg { fill: #1f2328; } /* white on yellow is too faint, in both themes */
 .more { font-size: 11px; margin-left: 4px; color: var(--fg-muted); }
-.none { font-size: 11px; color: var(--yellow); }
+.none { font-size: 11px; color: var(--yellow); padding: 0 6px; border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 50%, transparent); }
 .threads { display: flex; align-items: center; gap: 3px; }
 .threads.hot { color: var(--red); font-weight: 600; }
 .bot { color: var(--gray); font-weight: 400; }
@@ -199,12 +205,18 @@ const isOpen = p => p.state === "OPEN";
 const isDone = p => p.state === "MERGED" || p.state === "CLOSED";
 const ciFailed = p => p.ci.state === "FAILURE" || p.ci.state === "ERROR";
 const humanReviews = p => p.reviews.filter(r => !r.bot);
+// A change-requester who has been asked to look again no longer blocks on the
+// author, so changesBy (needs action) and reReview (waiting) are kept apart.
+const changeRequesters = p => p.reviews.filter(r => r.state === "CHANGES_REQUESTED").map(r => r.login);
+const isRequested = (p, login) => p.requestedReviewers.some(l => l.toLowerCase() === login.toLowerCase());
+const changesBy = p => changeRequesters(p).filter(l => !isRequested(p, l));
+const reReview = p => changeRequesters(p).filter(l => isRequested(p, l));
 const noReviewer = p => isOpen(p) && !p.requestedReviewers.length && !humanReviews(p).length;
 
 // Shown on the Mine tab only; chips with no matches are hidden.
 const FILTERS = {
   all:     { label: "All", fn: () => true },
-  action:  { label: "Needs action", fn: p => ciFailed(p) || p.changesRequested || p.humanThreads > 0 || p.conflicting },
+  action:  { label: "Needs action", fn: p => ciFailed(p) || changesBy(p).length > 0 || p.humanThreads > 0 || p.conflicting },
   waiting: { label: "Waiting on review", fn: p => p.requestedReviewers.length > 0 },
   noRev:   { label: "No reviewer", fn: noReviewer },
   ready:   { label: "Ready to merge", fn: p => p.reviewDecision === "APPROVED" && p.ci.state === "SUCCESS" && !p.conflicting && !p.humanThreads },
@@ -277,13 +289,16 @@ function ciCell(p) {
 const REVIEW_CLASS = { APPROVED: "approved", CHANGES_REQUESTED: "changes", COMMENTED: "commented" };
 const REVIEW_TEXT = { APPROVED: "approved", CHANGES_REQUESTED: "requested changes", COMMENTED: "commented", requested: "review requested" };
 
+const BADGE = { approved: P.check, changes: P.x, requested: P.dot, commented: P.comment };
+
 // login is a user login or "@team-slug"; kind is a ring class (or "" for none).
 function avatar(login, kind = "", title = "") {
   const team = login.startsWith("@");
   // The initial sits under the image and shows if the avatar fails to load.
   const img = team ? "" : `<img src="https://avatars.githubusercontent.com/${encodeURIComponent(login)}?s=44" alt="" loading="lazy" onerror="this.remove()">`;
   const label = team ? "@" : login[0].toUpperCase();
-  return `<span class="av ${kind}"${title ? ` title="${esc(title)}"` : ""}>${label}${img}</span>`;
+  const badge = BADGE[kind] ? `<span class="badge">${svg(BADGE[kind], "#fff", 8)}</span>` : "";
+  return `<span class="av ${kind}"${title ? ` title="${esc(title)}"` : ""}>${label}${img}${badge}</span>`;
 }
 
 const lc = s => s.toLowerCase();
@@ -326,6 +341,9 @@ function row(p, bundleMembers) {
   if (tab === "review") sub.push(`<span>${esc(p.author)}</span>`);
   if (!DEFAULT_BASES.has(p.base)) sub.push(`<span title="Base branch">on ${esc(p.base)}</span>`);
   sub.push(`<span><span class="add">+${p.additions}</span> <span class="del">−${p.deletions}</span></span>`);
+  const by = changesBy(p), again = reReview(p);
+  if (by.length) sub.push(`<span class="warn">changes requested by ${by.map(esc).join(", ")}</span>`);
+  else if (again.length) sub.push(`<span>re-review requested from ${again.map(esc).join(", ")}</span>`);
   if (p.conflicting) sub.push(`<span class="warn">conflicts</span>`);
   // Links already visible in this bundle are noise; show only the rest.
   const ext = p.links.filter(k => !bundleMembers.has(k) && data.prs[k]);
@@ -338,7 +356,8 @@ function row(p, bundleMembers) {
   const pick = tab !== "mine" ? "" : canRequest(p)
     ? `<span><input type="checkbox" class="rowsel" data-sel="${esc(p.key)}" ${selectedPRs.has(p.key) ? "checked" : ""} aria-label="Select ${esc(repoLabel(p.repo))} #${p.number}"></span>`
     : `<span></span>`;
-  return `<div class="row${isDone(p) && tab !== "closed" ? " done" : ""}">
+  const cls = (isDone(p) && tab !== "closed" ? " done" : "") + (!isDone(p) && by.length ? " changes" : "");
+  return `<div class="row${cls}">
     ${pick}<span title="${p.state.toLowerCase()}">${svg(P[p.state] || P.OPEN, STATE_COLOR[p.state])}</span>
     <div style="min-width:0">
       <a class="title" href="${esc(p.url)}" target="_blank" title="${esc(p.title + "\n" + p.head + " → " + p.base)}">${esc(p.title)}</a>
