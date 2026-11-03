@@ -52,8 +52,8 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .chip:hover { background: var(--bg-subtle); color: var(--fg); }
 .chip.active { background: var(--blue-bg); color: var(--link); }
 
-.cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 120px 48px 40px; gap: 0 12px; align-items: center; }
-.sel .cols, .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) 24px 120px 48px 40px; }
+.cols, .row { display: grid; grid-template-columns: 16px minmax(0, 1fr) 24px 132px 48px 40px; gap: 0 12px; align-items: center; }
+.sel .cols, .sel .row { grid-template-columns: 16px 16px minmax(0, 1fr) 24px 132px 48px 40px; }
 .cols .selcol { display: none; } .sel .cols .selcol { display: block; }
 .rowsel { margin: 0; accent-color: var(--link); cursor: pointer; }
 .cols { padding: 0 12px 4px; font-size: 11px; color: var(--fg-muted); }
@@ -93,7 +93,7 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .cell.age { justify-content: flex-end; }
 
 .avatars { display: flex; justify-content: center; }
-.av { position: relative; width: 22px; height: 22px; border-radius: 50%; margin-left: 2px; flex: none;
+.av { position: relative; width: 22px; height: 22px; border-radius: 50%; margin-left: 6px; flex: none;
   background: var(--gray-bg) center/cover; box-shadow: 0 0 0 2px var(--bg);
   display: grid; place-items: center; font-size: 10px; font-weight: 600; color: var(--fg-muted); }
 .av:first-child { margin-left: 0; }
