@@ -100,9 +100,18 @@ function mount(root, opts = {}) {
   let confirming = null, confirmTimer = 0;
   let tab = store.get("tab", "mine");
   let filter = store.get("filter", "all");
-  // Mine and To review as two columns; the Closed tab always shows alone.
+  // Two columns, each showing any one section (never the same twice); single
+  // mode keeps using `tab`.
   let split = store.get("split", "0") === "1";
-  const splitOn = () => split && tab !== "closed";
+  const splitOn = () => split;
+  const DEFAULT_COLS = ["mine", "review"];
+  let cols = (() => {
+    try {
+      const c = JSON.parse(store.get("splitCols", ""));
+      if (Array.isArray(c) && c.length === 2 && c[0] !== c[1] && c.every(id => TABS.some(t => t.id === id))) return c;
+    } catch {}
+    return DEFAULT_COLS;
+  })();
   if (!TABS.some(t => t.id === tab)) tab = "mine";
   if (!FILTERS[filter]) filter = "all";
   // Repo owners to show, on every tab; empty shows all.
@@ -344,28 +353,32 @@ function mount(root, opts = {}) {
     drawClaudeStatus();
 
     const both = splitOn();
-    // Both tabs read as selected in the split view; clicking either keeps it.
+    // In split view the global strip and chips are hidden: each column has its own.
     $("tabs").innerHTML = TABS.map(t =>
-      `<button class="tab ${t.id === tab || (both && t.id !== "closed") ? "active" : ""}" data-tab="${t.id}">${t.label}<span class="n">${section(t.id).length}</span></button>`
+      `<button class="tab ${t.id === tab ? "active" : ""}" data-tab="${t.id}">${t.label}<span class="n">${section(t.id).length}</span></button>`
     ).join("");
     $("split").setAttribute("aria-pressed", split);
     root.querySelector(".wrap").classList.toggle("split", both);
     $("list").classList.toggle("grid", both);
 
-    // Filters are Mine-only: they show on the Mine tab and beside Mine's column.
-    const useFilters = tab === "mine" || both;
-    const prs = section("mine");
+    // Filters are Mine-only: they show on the Mine tab and in the header of a column showing Mine.
+    const sids = both ? cols : [tab];
+    const useFilters = sids.includes("mine");
     const justMerged = recentlyMerged();
-    $("filters").innerHTML = useFilters ? Object.entries(FILTERS).map(([id, f]) => {
-      const n = prs.filter(f.fn).length;
-      // Merging stays reachable while only just-merged PRs are left to show.
-      if (!n && id !== filter && id !== "all" && !(id === "merging" && justMerged.length)) return "";
-      return `<button class="chip ${id === filter ? "active" : ""}" data-filter="${id}">${f.label}${id === "all" ? "" : `<span class="n">${n}</span>`}</button>`;
-    }).join("") : "";
+    const chips = () => {
+      const prs = section("mine");
+      return Object.entries(FILTERS).map(([id, f]) => {
+        const n = prs.filter(f.fn).length;
+        // Merging stays reachable while only just-merged PRs are left to show.
+        if (!n && id !== filter && id !== "all" && !(id === "merging" && justMerged.length)) return "";
+        return `<button class="chip ${id === filter ? "active" : ""}" data-filter="${id}">${f.label}${id === "all" ? "" : `<span class="n">${n}</span>`}</button>`;
+      }).join("");
+    };
+    $("filters").innerHTML = useFilters && !both ? chips() : "";
 
-    const sids = both ? ["mine", "review"] : [tab];
     const parts = sids.map(sid => renderSection(sid, sid === "mine" && useFilters ? FILTERS[filter].fn : () => true));
-    // Only requestable rows that are on screen can stay selected.
+    // Only requestable rows that are on screen can stay selected, so the
+    // selection goes when Mine leaves the screen and stays across column swaps.
     shownSel = new Set(sids.includes("mine") ? parts[sids.indexOf("mine")].shown.filter(p => canRequest(p, "mine")).map(p => p.key) : []);
     for (const k of [...selectedPRs]) if (!shownSel.has(k)) selectedPRs.delete(k);
     // The checkbox column belongs to Mine: the root when alone, its column when split.
@@ -374,7 +387,12 @@ function mount(root, opts = {}) {
     // An open rename input survives the 30s redraws by leaving the list alone.
     if (editing?.drawn) return renderSelbar();
     $("list").innerHTML = both
-      ? parts.map((x, i) => `<section class="col${sids[i] === "mine" ? " sel" : ""}"><h2 class="colhead">${TABS.find(t => t.id === sids[i]).label}<span class="n">${section(sids[i]).length}</span></h2>${COLS}<div class="cards">${x.html}</div></section>`).join("")
+      ? parts.map((x, i) => {
+        const switcher = TABS.map(t =>
+          `<button class="tab small ${t.id === sids[i] ? "active" : ""}" data-col="${i}" data-sec="${t.id}">${t.label}<span class="n">${section(t.id).length}</span></button>`
+        ).join("");
+        return `<section class="col${sids[i] === "mine" ? " sel" : ""}"><div class="bar colbar"><nav class="tabs">${switcher}</nav>${sids[i] === "mine" ? `<div class="filters">${chips()}</div>` : ""}</div>${COLS}<div class="cards">${x.html}</div></section>`;
+      }).join("")
       : parts[0].html;
     renderSelbar();
     if (editing) {
@@ -871,8 +889,7 @@ function mount(root, opts = {}) {
 
   $("tabs").addEventListener("click", e => {
     const b = evt(e).closest("[data-tab]"); if (!b) return;
-    // Mine's selection survives a hop between the two split columns' tabs.
-    if (b.dataset.tab !== tab && !(split && tab !== "closed" && b.dataset.tab !== "closed")) selectedPRs.clear();
+    if (b.dataset.tab !== tab) selectedPRs.clear();
     tab = b.dataset.tab; store.set("tab", tab); render(); motion.afterSwitch();
   });
   const pickFilter = e => {
@@ -891,6 +908,15 @@ function mount(root, opts = {}) {
   for (const id of ["orgs", "list"]) $(id).addEventListener("click", pickOrg);
   $("split").addEventListener("click", () => {
     split = !split; store.set("split", split ? "1" : "0"); render(); motion.afterSwitch();
+  });
+  // A column's switcher: the other column swaps in whatever this one showed.
+  $("list").addEventListener("click", e => {
+    const b = evt(e).closest("[data-sec]"); if (!b) return;
+    const i = +b.dataset.col, sec = b.dataset.sec;
+    if (cols[i] === sec) return;
+    cols = cols[1 - i] === sec ? [cols[1], cols[0]] : (i ? [cols[0], sec] : [sec, cols[1]]);
+    store.set("splitCols", JSON.stringify(cols));
+    render(); motion.afterSwitch();
   });
   $("refresh").addEventListener("click", () => load(true));
 

@@ -87,9 +87,10 @@ header { position: relative; }
 /* Side by side: the columns stack once there's no room for two 620px rows. */
 .wrap.split { max-width: 2400px; }
 .list.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(620px, 100%), 1fr)); gap: 24px; align-items: start; }
-.wrap.split > .cols { display: none; } /* each column carries its own */
+.wrap.split > .cols, .wrap.split > .bar { display: none; } /* each column carries its own */
 .col { min-width: 0; }
-.colhead { font-size: 14px; font-weight: 600; margin: 0 0 8px; padding: 0 12px; }
+.colbar { margin-bottom: 8px; min-height: 41px; } /* equal height with or without chips */
+.tab.small { font-size: 13px; padding: 4px 10px; }
 .iconbtn[aria-pressed=true] { background: var(--blue-bg); color: var(--link); }
 .card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .card > * + * { border-top: 1px solid var(--border-muted); }
