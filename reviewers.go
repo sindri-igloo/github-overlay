@@ -181,40 +181,61 @@ func (r reviewerSet) empty() bool { return len(r.Users) == 0 && len(r.Teams) == 
 // setReviewers adds and removes review requests on a PR and returns the
 // requests GitHub now has, teams as "@slug". GitHub answers 2xx even when it
 // skips a reviewer (an unknown login, a team without repo access), so a
-// requested add missing from the result comes back in ignored.
+// requested add missing from the result comes back in ignored. The POST and
+// DELETE answer with the pull request, so its requested lists are read from
+// the last change made; only a change with nothing to add or remove costs a
+// GET.
 func (c *client) setReviewers(pr prRef, add, remove reviewerSet) (requested, ignored []string, err error) {
 	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/requested_reviewers", pr.owner, pr.repo, pr.number)
 	body := func(r reviewerSet) map[string]any {
 		return map[string]any{"reviewers": nonNil(r.Users), "team_reviewers": nonNil(r.Teams)}
 	}
-	if !remove.empty() {
+	type pull struct {
+		RequestedReviewers []struct {
+			Login string `json:"login"`
+		} `json:"requested_reviewers"`
+		RequestedTeams []struct {
+			Slug string `json:"slug"`
+		} `json:"requested_teams"`
+	}
+	var now pull
+	// The last call's response is the freshest, so remove goes first.
+	switch {
+	case !remove.empty() && !add.empty():
 		if err := c.request("DELETE", path, body(remove), nil); err != nil {
 			return nil, nil, err
 		}
-	}
-	if !add.empty() {
-		if err := c.request("POST", path, body(add), nil); err != nil {
+		fallthrough
+	case !add.empty():
+		if err := c.request("POST", path, body(add), &now); err != nil {
 			return nil, nil, err
 		}
-	}
-	var now struct {
-		Users []struct {
-			Login string `json:"login"`
-		} `json:"users"`
-		Teams []struct {
-			Slug string `json:"slug"`
-		} `json:"teams"`
-	}
-	if err := c.request("GET", path, nil, &now); err != nil {
-		return nil, nil, err
+	case !remove.empty():
+		if err := c.request("DELETE", path, body(remove), &now); err != nil {
+			return nil, nil, err
+		}
+	default:
+		// This GET answers {users, teams}, not a pull request.
+		var cur struct {
+			Users []struct {
+				Login string `json:"login"`
+			} `json:"users"`
+			Teams []struct {
+				Slug string `json:"slug"`
+			} `json:"teams"`
+		}
+		if err := c.request("GET", path, nil, &cur); err != nil {
+			return nil, nil, err
+		}
+		now = pull{RequestedReviewers: cur.Users, RequestedTeams: cur.Teams}
 	}
 	have := map[string]bool{}
 	requested = []string{}
-	for _, u := range now.Users {
+	for _, u := range now.RequestedReviewers {
 		requested = append(requested, u.Login)
 		have[strings.ToLower(u.Login)] = true
 	}
-	for _, t := range now.Teams {
+	for _, t := range now.RequestedTeams {
 		requested = append(requested, "@"+t.Slug)
 		have["@"+strings.ToLower(t.Slug)] = true
 	}
