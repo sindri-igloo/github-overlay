@@ -62,4 +62,8 @@ Unconnected PRs share one box at the top; below it, open PRs are grouped when on
 or through GitHub's cross-reference events. Closed PRs don't join bundles, but
 they show as "Linked:" chips on the open PRs that reference them.
 
+Each group is named after the conventional-commit scopes in its PR titles (up to three, most shared first),
+or the title of the bottom PR of the stack when no title has a scope. Click the name to rename the group;
+the name is kept in `groups.json` under your config directory (`~/Library/Application Support/github-overlay/` on macOS), and clearing it reverts to the automatic one.
+
 Each search returns at most 50 PRs.

@@ -69,7 +69,11 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .bundle { border-color: var(--purple-border); }
 .bundle-head { display: flex; align-items: center; gap: 6px; padding: 4px 12px; font-size: 12px; font-weight: 600;
   color: var(--purple); background: var(--purple-bg); }
-.bundle-head .n { color: var(--purple); opacity: .8; }
+.bundle-head .n { color: var(--purple); opacity: .8; white-space: nowrap; }
+.bundle-head .name { font: inherit; color: inherit; background: none; border: none; padding: 0; cursor: text;
+  text-align: left; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bundle-head .name-input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0 4px; width: 260px; max-width: 50%; }
 .bundle > .bundle-head + .row { border-top-color: var(--purple-border); }
 .bundle-head .toggle { margin-left: auto; font: inherit; font-weight: 400; color: var(--purple); background: none;
   border: none; padding: 0 2px; cursor: pointer; }
@@ -214,6 +218,7 @@ const store = {
 
 let data = null;
 const expanded = new Set(); // bundles whose merged/closed PRs are unfolded
+let editing = null; // { gid, keys, auto, draft, drawn }: the group name being renamed
 const selectedPRs = new Set(); // Mine-tab rows ticked for a bulk reviewer request
 let shownSel = new Set(); // requestable PRs currently rendered
 let tab = store.get("tab", "mine");
@@ -353,6 +358,53 @@ function setFavicon(alert) {
   document.getElementById("favicon").href = "data:image/svg+xml," + encodeURIComponent(icon);
 }
 
+const SCOPED = /^\w+(\(([^)]+)\))?!?:/;
+
+// Name for a group with no manual one: its conventional-commit scopes, most
+// shared first, else the title of the stack's bottom PR.
+function autoName(keys) {
+  const prs = keys.map(k => data.prs[k]).filter(Boolean);
+  const scopes = new Map(); // lowercased -> { name, n }
+  for (const p of prs) {
+    const seen = new Set();
+    for (const part of (SCOPED.exec(p.title)?.[2] || "").split(/[,/]/)) {
+      const name = part.trim(), low = name.toLowerCase();
+      if (!name || seen.has(low)) continue;
+      seen.add(low);
+      const e = scopes.get(low) || scopes.set(low, { name, n: 0 }).get(low);
+      e.n++;
+    }
+  }
+  // Map keeps first-seen order and sort is stable, so ties stay in member order.
+  const top = [...scopes.values()].sort((a, b) => b.n - a.n).slice(0, 3);
+  if (top.length) return top.map(e => e.name).join(" · ");
+  const bottoms = prs.filter(p => !prs.some(q => q !== p && q.head === p.base));
+  const bottom = (bottoms.length ? bottoms : prs).sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  return bottom ? bottom.title.replace(/^\w+(\([^)]*\))?!?:\s*/, "") : "Connected";
+}
+
+// The newest manual name that shares a PR with the group, or "".
+function manualName(keys) {
+  const mine = new Set(keys.map(k => k.toLowerCase()));
+  const hits = (data.groupNames || []).filter(g => g.prs.some(k => mine.has(k)));
+  return hits.sort((a, b) => b.at.localeCompare(a.at))[0]?.name || "";
+}
+
+async function saveName() {
+  const ed = editing;
+  if (!ed) return;
+  editing = null;
+  try {
+    const r = await api("/api/groups", { method: "PUT", body: JSON.stringify({ prs: ed.keys, name: ed.draft.trim() }) });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || r.statusText);
+    data.groupNames = body.names;
+  } catch (e) {
+    data.error = e instanceof TypeError ? "Overlay server unreachable" : "Overlay: " + e.message;
+  }
+  render();
+}
+
 function render() {
   if (!data) return;
   setFavicon((data.sections.mine || []).some(k => FILTERS.action.fn(data.prs[k])));
@@ -409,12 +461,23 @@ function render() {
       ? `<button class="toggle" data-selkeys="${esc(reqKeys.join(","))}">${reqKeys.every(k => selectedPRs.has(k)) ? "Unselect" : "Select"}</button>` : "";
     const toggle = pickAll + (finished.length
       ? `<button class="toggle" data-expand="${esc(gid)}">${open ? "Hide" : "Show"} ${finished.length} ${finished.every(q => q.state === "MERGED") ? "merged" : "closed"}</button>` : "");
+    const keys = [...all], auto = autoName(keys), manual = manualName(keys);
+    const nameEl = editing?.gid === gid
+      ? `<input class="name-input" value="${esc(editing.draft)}" placeholder="${esc(auto)}" maxlength="80">`
+      : `<button class="name" data-rename="${esc(gid)}" data-keys="${esc(keys.join(","))}" data-auto="${esc(auto)}" data-manual="${esc(manual)}" title="Rename group">${esc(manual || auto)}</button>`;
     const rows = members.map(q => row(q, all)).join("") + (open ? finished.map(q => row(q, all)).join("") : "");
-    bundles.push(`<div class="card bundle"><div class="bundle-head">${svg(P.link, "currentColor", 12)}Connected<span class="n">${counts}${hidden ? `, ${hidden} not shown` : ""}</span>${toggle}</div>${rows}</div>`);
+    bundles.push(`<div class="card bundle"><div class="bundle-head">${svg(P.link, "currentColor", 12)}${nameEl}<span class="n">${counts}${hidden ? `, ${hidden} not shown` : ""}</span>${toggle}</div>${rows}</div>`);
   }
+  // An open rename input survives the 30s redraws by leaving the list alone.
+  if (editing?.drawn) return renderSelbar();
   const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
   document.getElementById("list").innerHTML = cards.join("") || `<div class="empty">Nothing here.</div>`;
   renderSelbar();
+  if (editing) {
+    editing.drawn = true;
+    const input = document.querySelector(".name-input");
+    if (input) { input.focus(); input.select(); } else editing = null; // its group is gone
+  }
 }
 
 function renderSelbar() {
@@ -783,11 +846,28 @@ document.getElementById("filters").addEventListener("click", e => {
 });
 document.getElementById("refresh").addEventListener("click", () => load(true));
 document.getElementById("list").addEventListener("click", e => {
+  const n = e.target.closest("[data-rename]");
+  if (n) {
+    const d = n.dataset;
+    editing = { gid: d.rename, keys: d.keys.split(","), auto: d.auto, draft: d.manual, drawn: false };
+    render();
+    return;
+  }
   const b = e.target.closest("[data-expand]"); if (!b) return;
   const id = b.dataset.expand;
   expanded.has(id) ? expanded.delete(id) : expanded.add(id);
   render();
 });
+;(() => {
+  const list = document.getElementById("list");
+  list.addEventListener("input", e => { if (editing && e.target.matches(".name-input")) editing.draft = e.target.value; });
+  list.addEventListener("focusout", e => { if (editing && e.target.matches(".name-input")) saveName(); });
+  list.addEventListener("keydown", e => {
+    if (!editing || !e.target.matches(".name-input")) return;
+    if (e.key === "Enter") { e.preventDefault(); e.target.blur(); } // blur saves
+    else if (e.key === "Escape") { e.stopPropagation(); editing = null; render(); }
+  });
+})();
 document.addEventListener("keydown", e => {
   if (e.key === "r" && !e.metaKey && !e.ctrlKey && !picker && e.target === document.body) load(true);
 });
