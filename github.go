@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,19 +29,19 @@ fragment pr on PullRequest {
     ... on Mannequin { login }
   } } }
   latestReviews(first: 20) { nodes { state author { __typename login } } }
-  reviewThreads(first: 100) { nodes {
+  reviewThreads(first: 50) { nodes {
     isResolved
     comments(first: 1) { nodes { author { __typename login } } }
   } }
   commits(last: 1) { nodes { commit { statusCheckRollup {
     state
-    contexts(first: 100) { nodes {
+    contexts(first: 50) { nodes {
       __typename
       ... on CheckRun { name status conclusion detailsUrl }
       ... on StatusContext { context state targetUrl }
     } }
   } } } }
-  timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT]) { nodes {
+  timelineItems(first: 25, itemTypes: [CROSS_REFERENCED_EVENT]) { nodes {
     ... on CrossReferencedEvent { source { __typename ... on PullRequest { url } } }
   } }
 }`
@@ -52,7 +54,7 @@ fragment pr on PullRequest {
   author { login }
   repository { nameWithOwner }
   latestReviews(first: 20) { nodes { state author { __typename login } } }
-  timelineItems(first: 50, itemTypes: [CROSS_REFERENCED_EVENT]) { nodes {
+  timelineItems(first: 25, itemTypes: [CROSS_REFERENCED_EVENT]) { nodes {
     ... on CrossReferencedEvent { source { __typename ... on PullRequest { url } } }
   } }
 }`
@@ -158,6 +160,7 @@ type sectionResponse struct {
 		Search struct{ Nodes []rawPR } `json:"search"`
 	} `json:"data"`
 	Errors []struct {
+		Type    string `json:"type"`
 		Message string `json:"message"`
 	} `json:"errors"`
 }
@@ -173,14 +176,46 @@ type queryResult struct {
 
 var errUnauthorized = errors.New("github: unauthorized")
 
+// RateLimitError means GitHub refused a call for rate limiting; calls
+// should wait until Until.
+type RateLimitError struct{ Until time.Time }
+
+func (e *RateLimitError) Error() string {
+	return "GitHub rate limit hit; paused until " + e.Until.Local().Format("15:04")
+}
+
 type client struct {
 	mu    sync.Mutex
 	token string
 	http  *http.Client
+
+	// Last GraphQL budget GitHub reported; remaining is -1 until known.
+	remaining int
+	reset     time.Time
 }
 
 func newClient() *client {
-	return &client{http: &http.Client{Timeout: 30 * time.Second}}
+	return &client{http: &http.Client{Timeout: 30 * time.Second}, remaining: -1}
+}
+
+// budget returns the GraphQL points left this hour and when they reset.
+func (c *client) budget() (int, time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.remaining, c.reset
+}
+
+// rateLimited picks how long to wait: until the hourly reset when the budget
+// is spent, otherwise a minute for GitHub's burst limits.
+func (c *client) rateLimited(retryAfter string) *RateLimitError {
+	if secs, err := strconv.Atoi(retryAfter); err == nil && secs > 0 {
+		return &RateLimitError{Until: time.Now().Add(time.Duration(secs) * time.Second)}
+	}
+	remaining, reset := c.budget()
+	if remaining == 0 && reset.After(time.Now()) {
+		return &RateLimitError{Until: reset}
+	}
+	return &RateLimitError{Until: time.Now().Add(time.Minute)}
 }
 
 func ghToken() (string, error) {
@@ -251,39 +286,15 @@ func (c *client) fetch(closedDays int) (*queryResult, error) {
 }
 
 func (c *client) query(q, search string) (*sectionResponse, error) {
-	res, err := c.do(q, search, false)
-	if errors.Is(err, errUnauthorized) {
-		res, err = c.do(q, search, true)
-	}
-	return res, err
-}
-
-func (c *client) do(q, search string, refreshToken bool) (*sectionResponse, error) {
-	token, err := c.getToken(refreshToken)
-	if err != nil {
-		return nil, err
-	}
-	body, _ := json.Marshal(map[string]any{
-		"query":     q,
-		"variables": map[string]string{"q": search},
-	})
-	req, _ := http.NewRequest("POST", "https://api.github.com/graphql", bytes.NewReader(body))
-	req.Header.Set("Authorization", "bearer "+token)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode == http.StatusUnauthorized {
-		return nil, errUnauthorized
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("github: HTTP %d", resp.StatusCode)
-	}
 	var out sectionResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	vars := map[string]any{"q": search}
+	if err := c.request("POST", "/graphql", map[string]any{"query": q, "variables": vars}, &out); err != nil {
 		return nil, err
+	}
+	for _, e := range out.Errors {
+		if strings.HasPrefix(e.Type, "RATE_LIMIT") || strings.Contains(strings.ToLower(e.Message), "rate limit") {
+			return nil, c.rateLimited("")
+		}
 	}
 	if out.Data == nil {
 		if len(out.Errors) > 0 {
@@ -292,4 +303,78 @@ func (c *client) do(q, search string, refreshToken bool) (*sectionResponse, erro
 		return nil, errors.New("github: empty response")
 	}
 	return &out, nil
+}
+
+// request calls the GitHub API, retrying once with a fresh gh token on 401.
+// out may be nil.
+func (c *client) request(method, path string, body, out any) error {
+	err := c.do(method, path, body, out, false)
+	if errors.Is(err, errUnauthorized) {
+		err = c.do(method, path, body, out, true)
+	}
+	return err
+}
+
+func (c *client) do(method, path string, body, out any, refreshToken bool) error {
+	token, err := c.getToken(refreshToken)
+	if err != nil {
+		return err
+	}
+	var rd io.Reader
+	if body != nil {
+		b, err := json.Marshal(body)
+		if err != nil {
+			return err
+		}
+		rd = bytes.NewReader(b)
+	}
+	req, err := http.NewRequest(method, "https://api.github.com"+path, rd)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "bearer "+token)
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.Header.Get("X-RateLimit-Resource") == "graphql" {
+		rem, err1 := strconv.Atoi(resp.Header.Get("X-RateLimit-Remaining"))
+		reset, err2 := strconv.ParseInt(resp.Header.Get("X-RateLimit-Reset"), 10, 64)
+		if err1 == nil && err2 == nil {
+			c.mu.Lock()
+			c.remaining, c.reset = rem, time.Unix(reset, 0)
+			c.mu.Unlock()
+		}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return errUnauthorized
+	}
+	if resp.StatusCode == http.StatusTooManyRequests ||
+		(resp.StatusCode == http.StatusForbidden && (resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "")) {
+		return c.rateLimited(resp.Header.Get("Retry-After"))
+	}
+	if resp.StatusCode >= 300 {
+		var e struct {
+			Message string `json:"message"`
+			Errors  []any  `json:"errors"`
+		}
+		json.NewDecoder(resp.Body).Decode(&e)
+		if strings.Contains(strings.ToLower(e.Message), "rate limit") {
+			return c.rateLimited(resp.Header.Get("Retry-After"))
+		}
+		if e.Message == "" {
+			e.Message = resp.Status
+		}
+		if len(e.Errors) > 0 {
+			return fmt.Errorf("github: %s: %v", e.Message, e.Errors[0])
+		}
+		return fmt.Errorf("github: %s", e.Message)
+	}
+	if out == nil {
+		return nil
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
 }

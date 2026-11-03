@@ -6,7 +6,9 @@ changes requested, CI status with links to failing checks, merge conflicts,
 and bundles of PRs that reference each other.
 
 It's a single Go binary with the page embedded. It authenticates with your
-`gh` CLI token and polls GitHub's GraphQL API every 60 seconds.
+`gh` CLI token and polls GitHub's GraphQL API every 2 minutes while the page
+is open (about 130 of your 5,000 hourly points per refresh), pausing when the
+budget runs low or GitHub rate-limits it.
 
 ## Install
 
@@ -34,7 +36,7 @@ Flags for `start`, `restart`, `open` and `serve`:
 | Flag | Default | |
 |---|---|---|
 | `-addr` | `prs.localhost:7777` | listen address; a `*.localhost` name listens on both loopback addresses |
-| `-interval` | `1m` | GitHub poll interval |
+| `-interval` | `2m` | poll interval while the page is open; nothing is fetched while it's closed |
 | `-closed-days` | `7` | how far back "Recently closed" goes |
 | `-bots` | `igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer` | logins counted as bots, in addition to GitHub App accounts |
 
@@ -43,7 +45,8 @@ The PID file and log are kept in `~/Library/Caches/github-overlay/`.
 ## Tabs
 
 - **Mine**: your open PRs and drafts, filterable by needs action, waiting on
-  review, no reviewer, ready to merge, and drafts.
+  review, no reviewer, ready to merge, and drafts. Tick rows (or a connected group's Select) to request
+  reviewers on several PRs at once.
 - **To review**: open PRs where you or one of your teams is a requested reviewer.
 - **Closed**: your PRs merged or closed in the last `-closed-days` days.
 
