@@ -924,7 +924,12 @@ function mount(root, opts = {}) {
            while on, the titles, branches and the start of the descriptions of your open PRs are sent to Anthropic.
            Changes show within a minute.`
         : `The Claude Code CLI wasn't found. Install it, log in, and restart the overlay server to use these.`}</p>
-      ${toggle("claudeGrouping", "Group related PRs", "Joins open PRs that belong to the same piece of work, even when they don't link to each other. Linked PRs always stay together.")}
+      ${toggle("claudeGrouping", "Group related PRs", "Groups open PRs by the piece of work they belong to, using links between them as hints. PRs Claude hasn't seen yet keep their links.")}
+      <div class="setting prompt">
+        <label for="grouping-prompt"><b>How to group</b><small>Claude follows this when grouping. Changing it regroups your PRs.</small></label>
+        <textarea id="grouping-prompt" data-setting="groupingPrompt" rows="3" maxlength="2000" ${off}>${esc(s.groupingPrompt)}</textarea>
+        <button type="button" class="btn" data-reset-prompt ${off || s.groupingPrompt === s.defaultGroupingPrompt ? "disabled" : ""}>Reset to default</button>
+      </div>
       ${toggle("claudeTitles", "Title groups", "Names each group after what it delivers instead of its scopes. Names you set by hand still win.")}
       <label class="setting model">Model
         <select data-setting="claudeModel" ${off}>${s.models.map(m =>
@@ -934,7 +939,8 @@ function mount(root, opts = {}) {
   }
 
   async function saveSetting(el) {
-    const next = { claudeGrouping: settings.claudeGrouping, claudeTitles: settings.claudeTitles, claudeModel: settings.claudeModel };
+    const next = { claudeGrouping: settings.claudeGrouping, claudeTitles: settings.claudeTitles,
+      claudeModel: settings.claudeModel, groupingPrompt: settings.groupingPrompt };
     next[el.dataset.setting] = el.type === "checkbox" ? el.checked : el.value;
     try {
       const r = await api("/api/settings", { method: "PUT", body: JSON.stringify(next) });
@@ -953,6 +959,15 @@ function mount(root, opts = {}) {
     const el = evt(e).closest("[data-setting]");
     if (el) saveSetting(el);
   });
+  $("settings").addEventListener("click", e => {
+    if (!evt(e).closest("[data-reset-prompt]")) return;
+    const box = $("grouping-prompt");
+    box.value = settings.defaultGroupingPrompt;
+    saveSetting(box);
+  });
+  // Typing in the panel shouldn't reach the host page's shortcuts (GitHub's,
+  // in the extension) or this page's own keys.
+  $("settings").addEventListener("keydown", e => e.stopPropagation());
   $("list").addEventListener("click", e => {
     const n = evt(e).closest("[data-rename]");
     if (n) {

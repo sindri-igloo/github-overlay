@@ -87,14 +87,16 @@ Both are off until you turn them on under ⚙ (Settings) in the page header, whi
 (default `claude-opus-5-5`):
 
 - **Group related PRs**: per tab (Mine, To review), Claude reads the open PRs' titles, branches, links and
-  the start of their descriptions, and groups the ones that belong to the same piece of work even when
-  they never reference each other. It only adds to the link-based groups: PRs that reference each other
-  are never split, and closed PRs keep their links only.
+  the start of their descriptions, and groups them by the piece of work they belong to. Links are hints:
+  PRs that only mention each other for context can end up in separate groups, and PRs that never
+  reference each other can share one. A merged PR linked to open ones joins one of their groups. PRs
+  opened since Claude last answered keep their link groups until it answers again. The "How to group"
+  box in Settings holds the instruction Claude follows; edit it to change how it groups, or reset it.
 - **Title groups**: each group gets a short title such as "Overdue invoice reminders".
 
 While a feature is on, the server runs the CLI in the background, one call at a time, with no tools,
 settings or MCP servers, and asks again only when a tab's open PRs or a group's PRs (or their titles)
-change. Answers are cached in `pr-groups.json` and `group-titles.json`, and the toggles in
+change, or the grouping instruction does. Answers are cached in `pr-groups.json` and `group-titles.json`, and the toggles in
 `settings.json`, next to `groups.json`. Turning a feature on sends those PR details to Anthropic under
 your Claude account; turning it off stops the calls and puts the plain groups and names back at once.
 

@@ -113,7 +113,7 @@ func (s *server) regroup() {
 // needs to answer, as far as the settings allow. s.mu must be held.
 func (s *server) applyClaude() {
 	set := s.settings.get()
-	var extra [][]string
+	var extra *claudeGroups
 	if set.ClaudeGrouping {
 		extra = s.grouping.groups(s.snap)
 		s.grouping.update(s.snap)
@@ -279,7 +279,7 @@ func serve(o *serveOpts, pidFile bool) error {
 	s.settings = loadSettings()
 	s.cli = newClaudeCLI(o.claude, func() string { return s.settings.get().ClaudeModel })
 	s.titles = newTitler(s.cli)
-	s.grouping = newGrouper(s.cli, s.regroup)
+	s.grouping = newGrouper(s.cli, func() string { return s.settings.get().GroupingPrompt }, s.regroup)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/prs", guard(s.handlePRs))

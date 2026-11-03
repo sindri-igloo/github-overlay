@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
+	"unicode/utf8"
 )
 
 // settings are the page's opt-in features, kept in settings.json next to
@@ -14,7 +17,11 @@ type settings struct {
 	ClaudeGrouping bool   `json:"claudeGrouping"` // group related open PRs with Claude
 	ClaudeTitles   bool   `json:"claudeTitles"`   // title connected groups with Claude
 	ClaudeModel    string `json:"claudeModel"`
+	GroupingPrompt string `json:"groupingPrompt"` // how Claude should group; empty means the default
 }
+
+// maxGroupingPrompt caps the user's grouping instruction, in characters.
+const maxGroupingPrompt = 2000
 
 // claudeModels are the models the settings offer; the first is the default.
 var claudeModels = []string{"claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"}
@@ -30,6 +37,9 @@ func loadSettings() *settingsStore {
 	loadJSON(st.path, &st.cur)
 	if !slices.Contains(claudeModels, st.cur.ClaudeModel) {
 		st.cur.ClaudeModel = claudeModels[0]
+	}
+	if strings.TrimSpace(st.cur.GroupingPrompt) == "" {
+		st.cur.GroupingPrompt = defaultGroupingPrompt
 	}
 	return st
 }
@@ -49,12 +59,13 @@ func (st *settingsStore) set(v settings) {
 
 type settingsResponse struct {
 	settings
-	Models []string `json:"models"`
-	Claude string   `json:"claude"` // path of the Claude Code CLI, or "" when it isn't installed
+	Models                []string `json:"models"`
+	DefaultGroupingPrompt string   `json:"defaultGroupingPrompt"`
+	Claude                string   `json:"claude"` // path of the Claude Code CLI, or "" when it isn't installed
 }
 
 func (s *server) settingsResponse() settingsResponse {
-	r := settingsResponse{settings: s.settings.get(), Models: claudeModels}
+	r := settingsResponse{settings: s.settings.get(), Models: claudeModels, DefaultGroupingPrompt: defaultGroupingPrompt}
 	if s.cli != nil {
 		r.Claude = s.cli.bin
 	}
@@ -73,6 +84,13 @@ func (s *server) handleSetSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	if !slices.Contains(claudeModels, v.ClaudeModel) {
 		httpError(w, errors.New("unknown model"), http.StatusBadRequest)
+		return
+	}
+	if v.GroupingPrompt = strings.TrimSpace(v.GroupingPrompt); v.GroupingPrompt == "" {
+		v.GroupingPrompt = defaultGroupingPrompt
+	}
+	if utf8.RuneCountInString(v.GroupingPrompt) > maxGroupingPrompt {
+		httpError(w, fmt.Errorf("the grouping instruction is longer than %d characters", maxGroupingPrompt), http.StatusBadRequest)
 		return
 	}
 	s.settings.set(v)

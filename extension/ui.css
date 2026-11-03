@@ -41,6 +41,11 @@ header h1 { font-size: 18px; margin: 0; font-weight: 600; }
 .setting input { margin: 3px 0 0; accent-color: var(--link); }
 .setting small { display: block; color: var(--fg-muted); font-size: 12px; }
 .setting.model { align-items: center; gap: 6px; cursor: default; }
+.setting.prompt { display: block; cursor: default; }
+.setting.prompt label { display: block; margin-bottom: 4px; }
+.setting.prompt textarea { display: block; width: 100%; max-width: 760px; font: inherit; font-size: 12px; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; resize: vertical; }
+.setting.prompt .btn { margin-top: 6px; }
 .setting select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; padding: 2px 6px; }
 
