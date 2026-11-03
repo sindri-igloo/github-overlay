@@ -84,3 +84,28 @@ or the title of the bottom PR of the stack when no title has a scope. Click the 
 the name is kept in `groups.json` under your config directory (`~/Library/Application Support/github-overlay/` on macOS), and clearing it reverts to the automatic one.
 
 Each search returns at most 50 PRs.
+
+## Browser extension
+
+`extension/` shows the same dashboard in place of GitHub's own pull request
+inbox at https://github.com/pulls/inbox, styled with GitHub's theme colors so
+it follows light, dark and dimmed. It reads from the local server, so keep
+`github-overlay start` running. A link above the dashboard switches back to
+GitHub's inbox (remembered per browser). It expects the server on the default
+`prs.localhost:7777`; for another `-addr`, change `SERVER` in
+`extension/background.js` and `host_permissions` in `extension/manifest.json`.
+
+The same folder works in Chrome and Firefox:
+
+- **Chrome**: open `chrome://extensions`, turn on Developer mode, click
+  "Load unpacked" and pick the `extension` folder.
+- **Firefox** (128+): open `about:debugging#/runtime/this-firefox`, click
+  "Load Temporary Add-on…" and pick `extension/manifest.json`. Temporary
+  add-ons are removed when Firefox quits; to keep it, sign it as an unlisted
+  add-on with `web-ext sign` or use Firefox Developer Edition with
+  `xpinstall.signatures.required` off. If the dashboard says it can't reach
+  the server, allow the extension's site access under `about:addons`.
+
+The dashboard code (`extension/ui.js`, `extension/ui.css`) is shared: the Go
+server embeds the same files for the standalone page, so changes show up in
+both.

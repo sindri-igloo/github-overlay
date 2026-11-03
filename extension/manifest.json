@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "GitHub PR Overlay",
+  "version": "0.1.0",
+  "description": "Shows the github-overlay dashboard on github.com/pulls/inbox, fed by the local github-overlay server.",
+  "host_permissions": ["http://prs.localhost/*"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/*"],
+      "js": ["ui.js", "content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["ui.css", "github.css"], "matches": ["https://github.com/*"] }
+  ],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "github-overlay@sindri-igloo",
+      "strict_min_version": "128.0",
+      "data_collection_permissions": { "required": ["none"] }
+    }
+  }
+}
