@@ -37,5 +37,5 @@ Conventional Commits, checked by commitlint in CI (`.commitlintrc.js`).
   PR takes its commit's header.
 - **Description**: a few bullets on what changed and why, then how it was
   verified. Link related PRs under `Related:` with full URLs.
-- Before pushing: `gofmt -l .` prints nothing, `go vet ./...` and
-  `go build ./...` pass.
+- Before pushing: `gofmt -l .` prints nothing, and `go vet ./...`,
+  `go build ./...` and `go test ./...` pass. CI also runs staticcheck.
