@@ -34,7 +34,8 @@ fragment pr on PullRequest {
     state
     contexts(first: 50) { nodes {
       __typename
-      ... on CheckRun { name status conclusion detailsUrl }
+      ... on CheckRun { name status conclusion detailsUrl startedAt
+        checkSuite { workflowRun { workflow { name } } } }
       ... on StatusContext { context state targetUrl }
     } }
   } } } }
@@ -138,9 +139,17 @@ type rawPR struct {
 							Status     string `json:"status"`
 							Conclusion string `json:"conclusion"`
 							DetailsURL string `json:"detailsUrl"`
-							Context    string `json:"context"`
-							State      string `json:"state"`
-							TargetURL  string `json:"targetUrl"`
+							StartedAt  string `json:"startedAt"`
+							CheckSuite *struct {
+								WorkflowRun *struct {
+									Workflow struct {
+										Name string `json:"name"`
+									} `json:"workflow"`
+								} `json:"workflowRun"`
+							} `json:"checkSuite"`
+							Context   string `json:"context"`
+							State     string `json:"state"`
+							TargetURL string `json:"targetUrl"`
 						} `json:"nodes"`
 					} `json:"contexts"`
 				} `json:"statusCheckRollup"`
