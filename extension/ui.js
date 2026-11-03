@@ -85,6 +85,12 @@ function mount(root, opts = {}) {
   let editing = null; // { gid, keys, auto, draft, drawn }: the group name being renamed
   const selectedPRs = new Set(); // Mine-tab rows ticked for a bulk reviewer request
   let shownSel = new Set(); // requestable PRs currently rendered
+  const landErrors = new Map(); // PR key -> why GitHub refused to queue or merge it; cleared on load
+  const landBusy = new Set(); // PR keys with a queue or merge in flight
+  let landNote = "", landNoteTimer = 0; // summary of the last bulk land, shown in the selection bar
+  // Merging can't be undone, so it takes a second click within a few seconds:
+  // a PR key for one row's Merge, "bulk" for the selection bar's button.
+  let confirming = null, confirmTimer = 0;
   let tab = store.get("tab", "mine");
   let filter = store.get("filter", "all");
   if (!TABS.some(t => t.id === tab)) tab = "mine";
@@ -159,6 +165,9 @@ function mount(root, opts = {}) {
   }
 
   const lc = s => s.toLowerCase();
+  // Queued where the base branch has a merge queue, merged otherwise. GitHub
+  // still decides: it refuses when checks are missing or the PR conflicts.
+  const canLand = p => tab === "mine" && p.state === "OPEN" && p.reviewDecision === "APPROVED" && !p.queued;
   const canRequest = p => tab === "mine" && (p.state === "OPEN" || p.state === "DRAFT");
 
   function reviewCell(p) {
@@ -202,6 +211,13 @@ function mount(root, opts = {}) {
     if (by.length) sub.push(`<span class="warn">changes requested by ${by.map(esc).join(", ")}</span>`);
     else if (again.length) sub.push(`<span>re-review requested from ${again.map(esc).join(", ")}</span>`);
     if (p.conflicting) sub.push(`<span class="warn">conflicts</span>`);
+    if (p.queued) sub.push(`<span class="queued" title="${esc(p.queued.state.toLowerCase().replace(/_/g, " "))}">in merge queue #${p.queued.position}</span>`);
+    else if (landErrors.has(p.key)) sub.push(`<span class="warn">${esc(landErrors.get(p.key))}</span>`);
+    else if (canLand(p)) {
+      const busy = landBusy.has(p.key), sure = confirming === p.key;
+      const label = busy ? (p.mergeQueue ? "Queuing…" : "Merging…") : p.mergeQueue ? "Add to merge queue" : sure ? "Confirm merge" : "Merge";
+      sub.push(`<span><button class="btn small${sure ? " danger" : ""}" data-land="${esc(p.key)}" ${busy ? "disabled" : ""}>${label}</button></span>`);
+    }
     // Links already visible in this bundle are noise; show only the rest.
     const ext = p.links.filter(k => !bundleMembers.has(k) && data.prs[k]);
     if (ext.length) sub.push(`<span>→ ${ext.map(k => {
@@ -369,12 +385,21 @@ function mount(root, opts = {}) {
 
   function renderSelbar() {
     const n = selectedPRs.size, bar = $("selbar");
-    root.querySelector(".wrap").classList.toggle("hasbar", n > 0);
-    bar.hidden = !n;
-    if (!n) { bar.innerHTML = ""; return; }
-    bar.innerHTML = `<span>${n} PR${n === 1 ? "" : "s"} selected</span><span class="sep">·</span>
+    root.querySelector(".wrap").classList.toggle("hasbar", n > 0 || !!landNote);
+    bar.hidden = !n && !landNote;
+    if (bar.hidden) { bar.innerHTML = ""; return; }
+    const land = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k]));
+    const queues = land.filter(k => data.prs[k].mergeQueue).length, merges = land.length - queues;
+    const sure = confirming === "bulk";
+    const landBtn = land.length
+      ? `<button class="btn ${sure ? "danger" : "primary"}" data-bar="land" ${land.some(k => landBusy.has(k)) ? "disabled" : ""} title="Queues where the repository has a merge queue and merges otherwise">${
+        sure ? "Confirm: " + [queues && `queue ${queues}`, merges && `merge ${merges}`].filter(Boolean).join(", ") : `Land ${land.length}`}</button>` : "";
+    const note = landNote ? `<span>${esc(landNote)}</span><span class="sep">·</span>` : "";
+    if (!n) { bar.innerHTML = note.replace(/<span class="sep">.*$/, ""); return; }
+    bar.innerHTML = `${note}<span>${n} PR${n === 1 ? "" : "s"} selected</span><span class="sep">·</span>
       <button class="btn" data-bar="all">Select all shown</button>
       <button class="btn" data-bar="clear">Clear</button>
+      ${landBtn}
       <button class="btn primary" data-bar="request" data-bulk>Request reviewers…</button>`;
   }
 
@@ -653,6 +678,46 @@ function mount(root, opts = {}) {
     }
   }
 
+  // Queues or merges keys in one request. Successes update the PR and leave the
+  // selection; failures keep their message in landErrors and stay selected.
+  async function land(keys) {
+    keys.forEach(k => { landBusy.add(k); landErrors.delete(k); });
+    render();
+    const n = { queued: 0, merged: 0, failed: 0 };
+    try {
+      const r = await api("/api/land", { method: "POST", body: JSON.stringify({ prs: keys }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || r.statusText);
+      body.results.forEach((res, i) => {
+        const key = keys[i];
+        if (res.error) { landErrors.set(key, res.error); n.failed++; return; }
+        n[res.action]++;
+        if (res.pr && data.prs[key]) data.prs[key] = res.pr;
+        selectedPRs.delete(key);
+      });
+    } catch (e) {
+      keys.forEach(k => landErrors.set(k, e.message));
+      n.failed = keys.length;
+    }
+    keys.forEach(k => landBusy.delete(k));
+    if (keys.length > 1) {
+      landNote = Object.entries(n).filter(([, v]) => v).map(([k, v]) => `${v} ${k}`).join(", ");
+      clearTimeout(landNoteTimer);
+      landNoteTimer = setTimeout(() => { landNote = ""; render(); }, 6000);
+    }
+    render();
+  }
+
+  // Arms a confirm click on id; it lapses after 4 seconds.
+  function confirmClick(id) {
+    if (confirming === id) { confirming = null; clearTimeout(confirmTimer); return true; }
+    confirming = id;
+    clearTimeout(confirmTimer);
+    confirmTimer = setTimeout(() => { confirming = null; render(); }, 4000);
+    render();
+    return false;
+  }
+
   // Row checkboxes, bundle Select buttons and the selection bar.
   function changeSelection(el) {
     const d = el.dataset;
@@ -669,6 +734,18 @@ function mount(root, opts = {}) {
   on(document, "click", e => {
     const btn = evt(e).closest("[data-reviewers]");
     if (btn) { openPicker(btn.dataset.reviewers, btn); return; }
+    const q = evt(e).closest("[data-land]");
+    if (q) {
+      const p = data.prs[q.dataset.land];
+      // Queueing can be undone on GitHub; only a merge needs the second click.
+      if (p && (p.mergeQueue || confirmClick(p.key))) land([p.key]);
+      return;
+    }
+    if (evt(e).closest("[data-bar=land]")) {
+      const keys = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k]));
+      if (keys.length && confirmClick("bulk")) land(keys);
+      return;
+    }
     const bar = evt(e).closest("[data-bar=request]");
     if (bar) { openBulk(bar); return; }
     const sel = evt(e).closest("[data-sel], [data-selkeys], [data-bar]");
@@ -714,6 +791,7 @@ function mount(root, opts = {}) {
         throw new Error(r.status === 403 ? "the server was updated; reload this page" : `HTTP ${r.status}`);
       }
       data = await r.json();
+      landErrors.clear();
     } catch (e) {
       data = data || { prs: {}, sections: {}, bundles: {} };
       data.error = e instanceof TypeError ? (opts.unreachable || "Overlay server unreachable") : "Overlay: " + e.message;
