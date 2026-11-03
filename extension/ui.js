@@ -328,8 +328,23 @@ function mount(root, opts = {}) {
     render();
   }
 
+  // Before the first answer, draw the same frame the data will fill, so split
+  // view doesn't start as one column and jump.
+  function drawLoading() {
+    const both = splitOn();
+    $("split").setAttribute("aria-pressed", split);
+    root.querySelector(".wrap").classList.toggle("split", both);
+    $("list").classList.toggle("grid", both);
+    if (!both) return; // the template's single-column placeholder already fits
+    $("list").innerHTML = cols.map((sid, i) => {
+      const switcher = TABS.map(t =>
+        `<button class="tab small ${t.id === sid ? "active" : ""}" data-col="${i}" data-sec="${t.id}">${t.label}</button>`).join("");
+      return `<section class="col"><div class="bar colbar"><nav class="tabs">${switcher}</nav></div>${COLS}<div class="cards"><div class="empty">Loading pull requests…</div></div></section>`;
+    }).join("");
+  }
+
   function render() {
-    if (!data) return;
+    if (!data) return drawLoading();
     setFavicon(section("mine").some(FILTERS.action.fn));
     const owners = {}, visible = {};
     Object.values(data.prs).forEach(p => {
@@ -1177,6 +1192,7 @@ function mount(root, opts = {}) {
     };
   })();
 
+  render(); // the loading frame, until load() answers
   load();
   // A hidden tab stops asking, so the server sees nobody looking and stops
   // polling GitHub; showing it again catches up at once.
