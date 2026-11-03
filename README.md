@@ -50,8 +50,9 @@ Flags for `start`, `restart`, `open` and `serve`:
 | `-interval` | `1m` | poll interval while the page is open and visible; nothing is fetched while it's closed or in a background tab |
 | `-closed-days` | `7` | how far back "Recently closed" goes |
 | `-bots` | `igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer` | logins counted as bots, in addition to GitHub App accounts |
-| `-group-titles` | `claude` | Claude Code CLI that titles connected groups; `''` turns titles off |
-| `-group-titles-model` | `claude-opus-5-5` | model the CLI uses for group titles |
+| `-claude` | `claude` | Claude Code CLI that groups and titles related PRs; `''` turns both off |
+| `-claude-model` | `claude-opus-5-5` | model the Claude CLI uses |
+| `-claude-grouping` | `true` | let Claude group related open PRs that don't link to each other |
 
 The CLI doesn't depend on DNS for `*.localhost`. If a browser can't reach http://prs.localhost:7777 (some VPNs and Tailscale DNS break `*.localhost` for browsers that use system DNS), use http://127.0.0.1:7777, or start with `-addr 127.0.0.1:7777`.
 
@@ -83,12 +84,20 @@ Unconnected PRs share one box at the top; below it, open PRs are grouped when on
 or through GitHub's cross-reference events. Closed PRs don't join bundles, but
 they show as "Linked:" chips on the open PRs that reference them.
 
-Each group gets a short title written by Claude from its PRs' titles, branches and the start of their
-descriptions, when the [Claude Code CLI](https://code.claude.com) is installed and logged in. The server
-runs it in the background, one group at a time, with no tools, settings or MCP servers, and asks again
-only when a group's PRs or their titles change; titles are cached in `group-titles.json` next to
-`groups.json`. That sends those PR details to Anthropic under your Claude account. Turn it off with
-`-group-titles ''`, or pick the model with `-group-titles-model` (default `claude-opus-5-5`).
+With the [Claude Code CLI](https://code.claude.com) installed and logged in, Claude also helps:
+
+- **Grouping**: per tab (Mine, To review), Claude reads the open PRs' titles, branches, links and the
+  start of their descriptions, and groups the ones that belong to the same piece of work even when they
+  never reference each other. It only adds to the link-based groups: PRs that reference each other are
+  never split, and closed PRs keep their links only. Turn it off with `-claude-grouping=false`.
+- **Titles**: each group gets a short title such as "Overdue invoice reminders".
+
+The server runs the CLI in the background, one call at a time, with no tools, settings or MCP servers,
+and asks again only when a tab's open PRs or a group's PRs (or their titles) change. Answers are cached
+in `pr-groups.json` and `group-titles.json` next to `groups.json`. This sends those PR details to
+Anthropic under your Claude account; `-claude ''` turns it off, and `-claude-model` picks the model
+(default `claude-opus-5-5`).
+
 Until a title arrives, or without the CLI, a group is named after the conventional-commit scopes in its
 PR titles (up to three, most shared first), or the title of the bottom PR of the stack when no title has a scope. Click the name to rename the group;
 the name is kept in `groups.json` under your config directory (`~/Library/Application Support/github-overlay/` on macOS), and clearing it reverts to the automatic one.

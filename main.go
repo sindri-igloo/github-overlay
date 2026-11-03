@@ -36,7 +36,8 @@ type server struct {
 
 	candidates candidateCache
 	groups     *groupStore
-	titles     *titler // nil when group titles are off
+	titles     *titler  // nil when the Claude CLI is off
+	grouping   *grouper // nil when Claude grouping is off
 
 	fetchMu sync.Mutex // serializes fetches
 	mu      sync.RWMutex
@@ -92,8 +93,26 @@ func (s *server) refresh(minAge time.Duration) {
 	if len(res.Errors) > 0 {
 		snap.Error = res.Errors[0]
 	}
+	snap.regroup(s.grouping.groups(snap))
 	s.snap = snap
-	s.titles.update(snap)
+	s.grouping.update(snap)
+	if !s.grouping.busy(snap) {
+		s.titles.update(snap)
+	}
+}
+
+// regroup applies a grouping that arrived after the snapshot was built, then
+// titles the groups it made.
+func (s *server) regroup() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.snap == nil {
+		return
+	}
+	s.snap.regroup(s.grouping.groups(s.snap))
+	if !s.grouping.busy(s.snap) {
+		s.titles.update(s.snap)
+	}
 }
 
 // fail keeps the last good data, surfaces err, and pauses fetching until
@@ -152,13 +171,14 @@ func (s *server) handlePRs(w http.ResponseWriter, r *http.Request) {
 }
 
 type serveOpts struct {
-	addr       string
-	interval   time.Duration
-	closedDays int
-	bots       string
-	titlesBin  string
-	titleModel string
-	args       []string // the raw flags, recorded in the state file for update
+	addr           string
+	interval       time.Duration
+	closedDays     int
+	bots           string
+	claude         string
+	claudeModel    string
+	claudeGrouping bool
+	args           []string // the raw flags, recorded in the state file for update
 }
 
 // serveFlags registers the server flags on fs. start and serve share them so
@@ -170,9 +190,10 @@ func serveFlags(fs *flag.FlagSet) *serveOpts {
 	fs.IntVar(&o.closedDays, "closed-days", 7, "show PRs merged/closed in the last N days")
 	fs.StringVar(&o.bots, "bots", "igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer",
 		"comma-separated logins to treat as bots (in addition to GitHub App accounts)")
-	fs.StringVar(&o.titlesBin, "group-titles", "claude",
-		"Claude Code CLI used to title connected groups from their PRs; empty turns titles off")
-	fs.StringVar(&o.titleModel, "group-titles-model", "claude-opus-5-5", "model the CLI uses for group titles")
+	fs.StringVar(&o.claude, "claude", "claude",
+		"Claude Code CLI that titles and groups related PRs; empty turns both off")
+	fs.StringVar(&o.claudeModel, "claude-model", "claude-opus-5-5", "model the Claude CLI uses")
+	fs.BoolVar(&o.claudeGrouping, "claude-grouping", true, "let Claude group related open PRs that don't link to each other")
 	return o
 }
 
@@ -239,7 +260,12 @@ func serve(o *serveOpts, pidFile bool) error {
 	}
 	s := &server{client: newClient(), bots: botSet, closedDays: o.closedDays, interval: o.interval,
 		candidates: candidateCache{entries: map[string]cachedCandidates{}}, groups: loadGroups(),
-		titles: newTitler(o.titlesBin, o.titleModel)}
+	}
+	cli := newClaudeCLI(o.claude, o.claudeModel)
+	s.titles = newTitler(cli)
+	if o.claudeGrouping {
+		s.grouping = newGrouper(cli, s.regroup)
+	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/prs", guard(s.handlePRs))

@@ -297,24 +297,34 @@ func buildSnapshot(res *queryResult, bots map[string]bool) *Snapshot {
 		s.Sections[name] = keys
 	}
 
-	// Two groupings share one id space in s.Bundles:
-	//   Bundle: open PRs plus everything they link to, open or closed. A
-	//     closed PR joins only through an open one; closed-to-closed links
-	//     don't count here, since old merged PRs chain unrelated work together.
-	//   ClosedBundle: closed PRs linked to each other, for the Closed tab.
-	open := func(p *PR) bool { return p.State == "OPEN" || p.State == "DRAFT" }
-	next := 1
-	next = s.group(next, func(a, b *PR) bool { return open(a) || open(b) },
-		func(p *PR, id int) { p.Bundle = id })
-	s.group(next, func(a, b *PR) bool { return !open(a) && !open(b) },
-		func(p *PR, id int) { p.ClosedBundle = id })
+	s.regroup(nil)
 	return s
+}
+
+// regroup recomputes the bundles. Two groupings share one id space in
+// s.Bundles:
+//   - Bundle: open PRs plus everything they link to, open or closed. A
+//     closed PR joins only through an open one; closed-to-closed links
+//     don't count here, since old merged PRs chain unrelated work together.
+//     extra adds groups of open PRs that belong together without linking
+//     (from Claude); it can merge bundles but never splits linked PRs.
+//   - ClosedBundle: closed PRs linked to each other, for the Closed tab.
+func (s *Snapshot) regroup(extra [][]string) {
+	s.Bundles = map[int][]string{}
+	for _, p := range s.PRs {
+		p.Bundle, p.ClosedBundle = 0, 0
+	}
+	open := func(p *PR) bool { return p.State == "OPEN" || p.State == "DRAFT" }
+	next := s.group(1, extra, func(a, b *PR) bool { return open(a) || open(b) },
+		func(p *PR, id int) { p.Bundle = id })
+	s.group(next, nil, func(a, b *PR) bool { return !open(a) && !open(b) },
+		func(p *PR, id int) { p.ClosedBundle = id })
 }
 
 // group joins PRs linked in either direction where edge allows it, records
 // each group of two or more in s.Bundles from id next on, calls assign for
 // every member, and returns the next free id.
-func (s *Snapshot) group(next int, edge func(a, b *PR) bool, assign func(*PR, int)) int {
+func (s *Snapshot) group(next int, extra [][]string, edge func(a, b *PR) bool, assign func(*PR, int)) int {
 	parent := map[string]string{}
 	var find func(string) string
 	find = func(k string) string {
@@ -328,6 +338,14 @@ func (s *Snapshot) group(next int, edge func(a, b *PR) bool, assign func(*PR, in
 		for _, l := range p.Links {
 			if q, ok := s.PRs[l]; ok && edge(p, q) {
 				parent[find(k)] = find(l)
+			}
+		}
+	}
+	for _, keys := range extra {
+		for i := 1; i < len(keys); i++ {
+			a, b := s.PRs[keys[0]], s.PRs[keys[i]]
+			if a != nil && b != nil && edge(a, b) {
+				parent[find(keys[0])] = find(keys[i])
 			}
 		}
 	}
