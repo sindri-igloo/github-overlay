@@ -29,7 +29,7 @@ Commands:
 
 Server flags (start, restart, serve, open):
   -addr string         listen address (default "prs.localhost:7777")
-  -interval duration   poll interval while the page is open (default 2m0s)
+  -interval duration   poll interval while the page is open (default 5m0s)
   -closed-days int     show PRs merged/closed in the last N days (default 7)
   -bots string         extra logins to treat as bots, comma-separated
 

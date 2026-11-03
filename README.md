@@ -6,9 +6,17 @@ changes requested, CI status with links to failing checks, merge conflicts,
 and bundles of PRs that reference each other.
 
 It's a single Go binary with the page embedded. It authenticates with your
-`gh` CLI token and polls GitHub's GraphQL API every 2 minutes while the page
-is open (about 130 of your 5,000 hourly points per refresh), pausing when the
-budget runs low or GitHub rate-limits it.
+`gh` CLI token and polls GitHub's GraphQL API every 5 minutes while the page
+is open, pausing when the budget runs low or GitHub rate-limits it.
+
+A refresh costs about 11 of your 5,000 hourly GraphQL points: 3 each for your
+open PRs and your review requests, 1 for recently closed PRs, and about 4 more
+to look up who started the unresolved review threads (skipped when there are
+none). GitHub prices a query by the page sizes it asks for, not by what comes
+back, so the cost barely moves with how many PRs you have. At the default
+`-interval 5m` that is about 130 points an hour while the page is visible, and
+nothing from a hidden tab or a closed page. A longer interval lowers it
+proportionally.
 
 ## Install
 
@@ -36,7 +44,7 @@ Flags for `start`, `restart`, `open` and `serve`:
 | Flag | Default | |
 |---|---|---|
 | `-addr` | `prs.localhost:7777` | listen address; a `*.localhost` name listens on both loopback addresses |
-| `-interval` | `2m` | poll interval while the page is open; nothing is fetched while it's closed |
+| `-interval` | `5m` | poll interval while the page is open and visible; nothing is fetched while it's closed or in a background tab |
 | `-closed-days` | `7` | how far back "Recently closed" goes |
 | `-bots` | `igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer` | logins counted as bots, in addition to GitHub App accounts |
 
