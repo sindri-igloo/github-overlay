@@ -104,7 +104,7 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case p.State != "OPEN":
 					reason = "not open"
-				case p.ReviewDecision != "APPROVED":
+				case !p.Approved:
 					reason = "not approved"
 				case p.Queued != nil:
 					reason = "already in the merge queue"

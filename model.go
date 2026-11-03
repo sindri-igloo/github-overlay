@@ -48,6 +48,7 @@ type PR struct {
 	RequestedReviewers []string `json:"requestedReviewers"`
 	Reviews            []Review `json:"reviews"`
 	ChangesRequested   bool     `json:"changesRequested"`
+	Approved           bool     `json:"approved"`     // GitHub's decision, or a person's approval where the branch requires none
 	HumanThreads       int      `json:"humanThreads"` // unresolved
 	BotThreads         int      `json:"botThreads"`   // unresolved
 	CI                 CI       `json:"ci"`
@@ -167,6 +168,14 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 		p.Reviews = append(p.Reviews, Review{Login: n.Author.Login, State: n.State, Bot: isBot(n.Author, bots)})
 		if n.State == "CHANGES_REQUESTED" {
 			p.ChangesRequested = true
+		}
+	}
+	// Without branch protection GitHub leaves reviewDecision empty even after
+	// an approval, so a person's approval with no changes requested counts.
+	p.Approved = p.ReviewDecision == "APPROVED"
+	if p.ReviewDecision == "" && !p.ChangesRequested {
+		for _, rv := range p.Reviews {
+			p.Approved = p.Approved || (!rv.Bot && rv.State == "APPROVED")
 		}
 	}
 
