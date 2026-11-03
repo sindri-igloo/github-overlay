@@ -388,7 +388,7 @@ function mount(root, opts = {}) {
     const cards = [...(loose.length ? [`<div class="card">${loose.join("")}</div>`] : []), ...bundles];
     // PRs just out of the queue would otherwise vanish from Mine unseen. The
     // cutoff is checked on every render, so the 30s redraw expires them.
-    if (tab === "mine" && (filter === "all" || filter === "merging")) {
+    if (tab === "mine" && filter === "merging") {
       const cutoff = Date.now() - 60 * 60 * 1000;
       const merged = section("closed").filter(p => p.state === "MERGED" && p.closedAt && Date.parse(p.closedAt) >= cutoff)
         .sort((a, b) => b.closedAt.localeCompare(a.closedAt));
