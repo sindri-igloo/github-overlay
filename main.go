@@ -151,6 +151,33 @@ func (s *server) poll() {
 	}
 }
 
+// claudeStatus tells the page what Claude is still working on, so it can say
+// so and poll faster until it's done.
+type claudeStatus struct {
+	Grouping bool   `json:"grouping"`        // a grouping is on its way
+	Titles   int    `json:"titles"`          // groups waiting for a title
+	Error    string `json:"error,omitempty"` // the last failure, until a call succeeds
+}
+
+func (s *server) claudeStatus() *claudeStatus {
+	set := s.settings.get()
+	if !set.ClaudeGrouping && !set.ClaudeTitles {
+		return nil
+	}
+	st := &claudeStatus{}
+	if set.ClaudeGrouping {
+		st.Grouping, st.Error = s.grouping.status()
+	}
+	if set.ClaudeTitles {
+		n, err := s.titles.status()
+		st.Titles = n
+		if st.Error == "" {
+			st.Error = err
+		}
+	}
+	return st
+}
+
 // groupTitles returns Claude's titles for the current bundles, when titles
 // are on. s.mu must be held.
 func (s *server) groupTitles() map[int]string {
@@ -186,7 +213,8 @@ func (s *server) handlePRs(w http.ResponseWriter, r *http.Request) {
 		*Snapshot
 		GroupNames  []groupName    `json:"groupNames"`
 		GroupTitles map[int]string `json:"groupTitles"` // by bundle id
-	}{s.snap, s.groups.list(), s.groupTitles()})
+		Claude      *claudeStatus  `json:"claude"`      // null when no Claude feature is on
+	}{s.snap, s.groups.list(), s.groupTitles(), s.claudeStatus()})
 }
 
 type serveOpts struct {

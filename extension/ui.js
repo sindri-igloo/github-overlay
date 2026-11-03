@@ -14,6 +14,7 @@ const TEMPLATE = `<div class="wrap">
     <h1>Pull requests</h1>
     <div class="filters orgs" id="orgs"></div>
     <span class="meta" id="meta"></span>
+    <span class="claude-status" id="claude-status" hidden></span>
     <button class="iconbtn" id="split" title="Side by side" aria-pressed="false">⇆</button>
     <button class="iconbtn" id="refresh" title="Refresh now (r)">↻</button>
     <button class="iconbtn" id="settings-btn" title="Settings" aria-expanded="false" aria-controls="settings">⚙</button>
@@ -340,6 +341,7 @@ function mount(root, opts = {}) {
     $("meta").textContent =
       data.fetchedAt ? `updated ${ago(data.fetchedAt) === "now" ? "just now" : ago(data.fetchedAt) + " ago"}` : "loading…";
     $("meta").title = `${data.viewer || ""} · ${data.rateRemaining} API points left`;
+    drawClaudeStatus();
 
     const both = splitOn();
     // Both tabs read as selected in the split view; clicking either keeps it.
@@ -933,13 +935,14 @@ function mount(root, opts = {}) {
       <p class="settings-note">${s.claude
         ? `Off unless you turn it on. Uses your Claude Code login (<code>${esc(s.claude)}</code>) in the background;
            while on, the titles, branches and the start of the descriptions of your open PRs are sent to Anthropic.
-           Changes show within a minute.`
+           The header shows when Claude is working; a grouping takes about 10 seconds.`
         : `The Claude Code CLI wasn't found. Install it, log in, and restart the overlay server to use these.`}</p>
       ${toggle("claudeGrouping", "Group related PRs", "Groups open PRs by the piece of work they belong to, using links between them as hints. PRs Claude hasn't seen yet keep their links.")}
       <div class="setting prompt">
         <label for="grouping-prompt"><b>How to group</b><small>The instruction Claude groups by. Apply regroups your PRs.</small></label>
         <textarea id="grouping-prompt" rows="4" maxlength="2000" ${off}>${esc(text)}</textarea>
         <div class="prompt-actions">
+          <span class="prompt-status" id="prompt-status" role="status"></span>
           <button type="button" class="btn" id="reset-prompt" title="Put the default instruction in the box">Reset to default</button>
           <button type="button" class="btn primary" id="apply-prompt" title="Apply (⌘/Ctrl+Enter)">Apply</button>
         </div>
@@ -951,6 +954,29 @@ function mount(root, opts = {}) {
       </label>
       ${error ? `<div class="error">⚠ ${esc(error)}</div>` : ""}`;
     syncPromptButtons();
+    if (data) drawClaudeStatus();
+  }
+
+  // What Claude is still doing in the background, as the server reports it:
+  // shown next to the update time and under Apply. While it works, the page
+  // polls every 2s instead of 30s, so new groups and titles show as they land.
+  let fastPoll = null;
+  let promptApplied = false; // the last Apply went through; say so once Claude is done
+  function drawClaudeStatus() {
+    const c = data.claude, el = $("claude-status");
+    const busy = !!c && (c.grouping || c.titles > 0);
+    const text = !c ? "" : c.grouping ? "Regrouping…"
+      : c.titles ? `Naming ${c.titles} group${c.titles === 1 ? "" : "s"}…` : c.error ? "Claude failed" : "";
+    el.hidden = !text;
+    el.className = "claude-status" + (busy ? " busy" : c?.error ? " err" : "");
+    el.textContent = text;
+    el.title = c?.error && !busy ? `Claude: ${c.error}` : "Claude is working in the background";
+    const ps = $("prompt-status");
+    if (ps) ps.textContent = c?.grouping ? "Regrouping your PRs…"
+      : c?.error ? `Claude failed: ${c.error}` : promptApplied ? "Applied" : "";
+    if (ps) ps.classList.toggle("err", !c?.grouping && !!c?.error);
+    clearTimeout(fastPoll);
+    if (busy) fastPoll = setTimeout(() => document.hidden || load(), 2000);
   }
 
   // Apply is live only when the box differs from what's saved; Reset only
@@ -963,6 +989,11 @@ function mount(root, opts = {}) {
   }
 
   async function saveSettings(change) {
+    const prompt = "groupingPrompt" in change;
+    if (prompt) {
+      promptApplied = false;
+      $("prompt-status").textContent = "Applying…";
+    }
     const next = { claudeGrouping: settings.claudeGrouping, claudeTitles: settings.claudeTitles,
       claudeModel: settings.claudeModel, groupingPrompt: settings.groupingPrompt, ...change };
     try {
@@ -970,7 +1001,7 @@ function mount(root, opts = {}) {
       const body = await r.json();
       if (!r.ok) throw new Error(body.error || r.statusText);
       settings = body;
-      if ("groupingPrompt" in change) draft = null;
+      if (prompt) { draft = null; promptApplied = true; }
       drawSettings();
       load(); // turning a feature off applies at once
     } catch (e) {
@@ -991,6 +1022,8 @@ function mount(root, opts = {}) {
   $("settings").addEventListener("input", e => {
     if (evt(e).id !== "grouping-prompt") return;
     draft = evt(e).value;
+    promptApplied = false;
+    if (!data.claude?.grouping) $("prompt-status").textContent = "";
     syncPromptButtons();
   });
   $("settings").addEventListener("click", e => {
@@ -1126,6 +1159,7 @@ function mount(root, opts = {}) {
   return {
     destroy() {
       timers.forEach(clearInterval);
+      clearTimeout(fastPoll);
       listeners.forEach(([el, type, fn, capture]) => el.removeEventListener(type, fn, capture));
       root.innerHTML = "";
       root.classList.remove("gho", "sel");

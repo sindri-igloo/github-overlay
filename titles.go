@@ -18,11 +18,12 @@ type titler struct {
 	cli  *claudeCLI
 	path string
 
-	mu     sync.Mutex
-	cache  map[string]titleEntry // group signature -> title
-	queued map[string]bool
-	failed map[string]time.Time
-	work   chan []*PR
+	mu      sync.Mutex
+	cache   map[string]titleEntry // group signature -> title
+	queued  map[string]bool
+	failed  map[string]time.Time
+	lastErr string // the last failure, until a call succeeds
+	work    chan []*PR
 }
 
 type titleEntry struct {
@@ -80,6 +81,16 @@ func (t *titler) titles(snap *Snapshot) map[int]string {
 	return out
 }
 
+// status reports how many groups wait for a title, and the last failure.
+func (t *titler) status() (pending int, lastErr string) {
+	if t == nil {
+		return 0, ""
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.queued), t.lastErr
+}
+
 // update queues the groups in snap that have no title yet.
 func (t *titler) update(snap *Snapshot) {
 	if t == nil {
@@ -132,9 +143,11 @@ func (t *titler) run() {
 		delete(t.queued, sig)
 		if err != nil {
 			t.failed[sig] = time.Now()
+			t.lastErr = err.Error()
 			log.Printf("group title: %v", err)
 		} else {
 			delete(t.failed, sig)
+			t.lastErr = ""
 			log.Printf("group titled %q", title)
 			t.cache[sig] = titleEntry{Title: title, Seen: time.Now().UTC().Format(time.RFC3339)}
 			saveJSON(t.path, t.cache)

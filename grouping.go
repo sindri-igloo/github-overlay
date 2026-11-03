@@ -20,11 +20,12 @@ type grouper struct {
 	instruction func() string // the user's grouping instruction, from settings
 	onChange    func()        // called, without g.mu held, when a grouping arrives
 
-	mu     sync.Mutex
-	cache  map[string]groupingEntry // key -> answer
-	queued map[string]bool
-	failed map[string]time.Time
-	work   chan groupingJob
+	mu      sync.Mutex
+	cache   map[string]groupingEntry // key -> answer
+	queued  map[string]bool
+	failed  map[string]time.Time
+	lastErr string // the last failure, until a call succeeds
+	work    chan groupingJob
 }
 
 type groupingEntry struct {
@@ -152,6 +153,16 @@ func (g *grouper) busy(snap *Snapshot) bool {
 	return false
 }
 
+// status reports whether a grouping is on its way, and the last failure.
+func (g *grouper) status() (pending bool, lastErr string) {
+	if g == nil {
+		return false, ""
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return len(g.queued) > 0, g.lastErr
+}
+
 // update queues the sections of snap that have no answer yet.
 func (g *grouper) update(snap *Snapshot) {
 	if g == nil {
@@ -203,9 +214,11 @@ func (g *grouper) run() {
 		delete(g.queued, job.key)
 		if err != nil {
 			g.failed[job.key] = time.Now()
+			g.lastErr = err.Error()
 			log.Printf("grouping: %v", err)
 		} else {
 			delete(g.failed, job.key)
+			g.lastErr = ""
 			log.Printf("grouped %d PRs into %d groups", len(job.prs), len(groups))
 			covered := make([]string, len(job.prs))
 			for i, p := range job.prs {

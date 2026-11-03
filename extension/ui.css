@@ -48,7 +48,14 @@ header { position: relative; }
 .setting.prompt label { display: block; margin-bottom: 4px; }
 .setting.prompt textarea { display: block; width: 100%; font: inherit; font-size: 12px; color: var(--fg);
   background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; resize: vertical; }
-.prompt-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.prompt-actions { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 6px; }
+.prompt-status { flex: 1; font-size: 12px; color: var(--fg-muted); }
+.prompt-status.err { color: var(--red); }
+.claude-status { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
+.claude-status[hidden] { display: none; }
+.claude-status.busy::before { content: ""; width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid currentColor;
+  border-right-color: transparent; animation: spin .8s linear infinite; }
+.claude-status.err { color: var(--red); }
 .setting select { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--border);
   border-radius: 6px; padding: 2px 6px; }
 
