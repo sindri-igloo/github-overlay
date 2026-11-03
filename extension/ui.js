@@ -819,7 +819,9 @@ function mount(root, opts = {}) {
     const un = evt(e).closest("[data-unpick]");
     if (un && !picker.busy) { picker.selected.delete(un.dataset.unpick); drawPicker(); }
   });
-  on(document, "change", e => {
+  // "change" isn't composed: in the extension's shadow root it never reaches
+  // document, so listen on root, which holds the picker.
+  on(root, "change", e => {
     if (!picker || !picker.el.contains(evt(e)) || !evt(e).dataset.id) return;
     const id = evt(e).dataset.id;
     evt(e).checked ? picker.selected.add(id) : picker.selected.delete(id);
