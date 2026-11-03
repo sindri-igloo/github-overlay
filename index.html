@@ -892,7 +892,10 @@ document.addEventListener("keydown", e => {
 });
 
 load();
-setInterval(load, 30000);
+// A hidden tab stops asking, so the server sees nobody looking and stops
+// polling GitHub; showing it again catches up at once.
+setInterval(() => document.hidden || load(), 30000);
+document.addEventListener("visibilitychange", () => document.hidden || load());
 setInterval(render, 30000); // keep relative times fresh
 </script>
 </body>

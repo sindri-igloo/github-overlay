@@ -6,7 +6,7 @@ changes requested, CI status with links to failing checks, merge conflicts,
 and bundles of PRs that reference each other.
 
 It's a single Go binary with the page embedded. It authenticates with your
-`gh` CLI token and polls GitHub's GraphQL API every 2 minutes while the page
+`gh` CLI token and polls GitHub's GraphQL API every 5 minutes while the page
 is open, pausing when the budget runs low or GitHub rate-limits it.
 
 A refresh costs 57 of your 5,000 hourly GraphQL points: 28 each for your open
@@ -42,7 +42,7 @@ Flags for `start`, `restart`, `open` and `serve`:
 | Flag | Default | |
 |---|---|---|
 | `-addr` | `prs.localhost:7777` | listen address; a `*.localhost` name listens on both loopback addresses |
-| `-interval` | `2m` | poll interval while the page is open; nothing is fetched while it's closed |
+| `-interval` | `5m` | poll interval while the page is open and visible; nothing is fetched while it's closed or in a background tab |
 | `-closed-days` | `7` | how far back "Recently closed" goes |
 | `-bots` | `igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer` | logins counted as bots, in addition to GitHub App accounts |
 
