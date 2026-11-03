@@ -48,8 +48,9 @@ type PR struct {
 	HumanThreads       int      `json:"humanThreads"` // unresolved
 	BotThreads         int      `json:"botThreads"`   // unresolved
 	CI                 CI       `json:"ci"`
-	Links              []string `json:"links"` // keys of PRs referenced from/to this one
-	Bundle             int      `json:"bundle"`
+	Links              []string `json:"links"`        // keys of PRs referenced from/to this one
+	Bundle             int      `json:"bundle"`       // group of open PRs and what they link to
+	ClosedBundle       int      `json:"closedBundle"` // group of closed PRs linked to each other
 }
 
 type Snapshot struct {
@@ -243,11 +244,24 @@ func buildSnapshot(res *queryResult, bots map[string]bool) *Snapshot {
 		s.Sections[name] = keys
 	}
 
-	// Union-find over references between open PRs. A link in either
-	// direction connects two PRs into the same bundle. Closed PRs stay out:
-	// old ones chain unrelated work together, and they still show up as
-	// "Linked:" chips on the open PRs that reference them.
+	// Two groupings share one id space in s.Bundles:
+	//   Bundle: open PRs plus everything they link to, open or closed. A
+	//     closed PR joins only through an open one; closed-to-closed links
+	//     don't count here, since old merged PRs chain unrelated work together.
+	//   ClosedBundle: closed PRs linked to each other, for the Closed tab.
 	open := func(p *PR) bool { return p.State == "OPEN" || p.State == "DRAFT" }
+	next := 1
+	next = s.group(next, func(a, b *PR) bool { return open(a) || open(b) },
+		func(p *PR, id int) { p.Bundle = id })
+	s.group(next, func(a, b *PR) bool { return !open(a) && !open(b) },
+		func(p *PR, id int) { p.ClosedBundle = id })
+	return s
+}
+
+// group joins PRs linked in either direction where edge allows it, records
+// each group of two or more in s.Bundles from id next on, calls assign for
+// every member, and returns the next free id.
+func (s *Snapshot) group(next int, edge func(a, b *PR) bool, assign func(*PR, int)) int {
 	parent := map[string]string{}
 	var find func(string) string
 	find = func(k string) string {
@@ -258,38 +272,32 @@ func buildSnapshot(res *queryResult, bots map[string]bool) *Snapshot {
 		return parent[k]
 	}
 	for k, p := range s.PRs {
-		if !open(p) {
-			continue
-		}
 		for _, l := range p.Links {
-			if q, ok := s.PRs[l]; ok && open(q) {
+			if q, ok := s.PRs[l]; ok && edge(p, q) {
 				parent[find(k)] = find(l)
 			}
 		}
 	}
 	groups := map[string][]string{}
-	for k, p := range s.PRs {
-		if !open(p) {
-			continue
-		}
+	for k := range s.PRs {
 		root := find(k)
 		groups[root] = append(groups[root], k)
 	}
-	roots := make([]string, 0, len(groups))
+	var roots []string
 	for r, members := range groups {
 		if len(members) > 1 {
 			roots = append(roots, r)
 		}
 	}
 	sort.Strings(roots)
-	for i, r := range roots {
-		id := i + 1
+	for _, r := range roots {
 		members := groups[r]
 		sort.Strings(members)
-		s.Bundles[id] = members
+		s.Bundles[next] = members
 		for _, k := range members {
-			s.PRs[k].Bundle = id
+			assign(s.PRs[k], next)
 		}
+		next++
 	}
-	return s
+	return next
 }
