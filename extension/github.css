@@ -23,3 +23,6 @@
 .on-github .wrap { max-width: 1600px; }
 
 .on-github .wrap.split { max-width: none; }
+/* The switch link sits in its own strip above the dashboard; keep its right
+   edge on the dashboard's when split view lifts the width cap. */
+.switch:has(+ .on-github .wrap.split) { max-width: none; }
