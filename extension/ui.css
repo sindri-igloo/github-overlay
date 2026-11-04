@@ -90,7 +90,12 @@ header { position: relative; }
 .wrap.split > .cols, .wrap.split > .bar { display: none; } /* each column carries its own */
 .col { min-width: 0; }
 .colbar { margin-bottom: 8px; min-height: 41px; } /* equal height with or without chips */
-.tab.small { font-size: 13px; padding: 4px 10px; }
+.tab.small { font-size: 13px; padding: 4px 8px; }
+/* The column header shares one line between tabs and filter chips, so the
+   chips compact there — otherwise tabs (236px) plus chips (553px) overflow a
+   ~730px column and the filters drop to their own line. */
+.colbar .chip { font-size: 11px; padding: 2px 4px; }
+.colbar .chip .n, .colbar .tab.small .n { font-size: 11px; }
 .iconbtn[aria-pressed=true] { background: var(--blue-bg); color: var(--link); }
 .card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
 .card > * + * { border-top: 1px solid var(--border-muted); }
