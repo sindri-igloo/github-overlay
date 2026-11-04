@@ -19,6 +19,7 @@ fragment pr on PullRequest {
   id number title url isDraft state merged createdAt updatedAt closedAt mergedAt
   additions deletions mergeable reviewDecision body
   isMergeQueueEnabled isInMergeQueue mergeQueueEntry { position state }
+  autoMergeRequest { enabledAt }
   headRefName baseRefName
   author { login }
   repository { nameWithOwner squashMergeAllowed mergeCommitAllowed rebaseMergeAllowed }
@@ -94,6 +95,12 @@ type queueEntry struct {
 	State    string `json:"state"` // QUEUED, AWAITING_CHECKS, MERGEABLE, UNMERGEABLE, LOCKED
 }
 
+// autoMergeReq marks an enabled auto-merge as non-null; only its presence
+// matters for the page.
+type autoMergeReq struct {
+	EnabledAt string `json:"enabledAt"`
+}
+
 type rawPR struct {
 	ID             string  `json:"id"`
 	Number         int     `json:"number"`
@@ -117,6 +124,8 @@ type rawPR struct {
 
 	IsMergeQueueEnabled bool        `json:"isMergeQueueEnabled"`
 	MergeQueueEntry     *queueEntry `json:"mergeQueueEntry"` // null when not queued
+
+	AutoMergeRequest *autoMergeReq `json:"autoMergeRequest"` // null when auto-merge is off
 
 	Repository struct {
 		NameWithOwner      string `json:"nameWithOwner"`
