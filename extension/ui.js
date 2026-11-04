@@ -62,6 +62,9 @@ function mount(root, opts = {}) {
   const isOpen = p => p.state === "OPEN";
   const isDone = p => p.state === "MERGED" || p.state === "CLOSED";
   const ciFailed = p => p.ci.state === "FAILURE" || p.ci.state === "ERROR";
+  // Checks are still running, so a direct merge would be refused but GitHub
+  // could merge the PR itself once they pass.
+  const ciRunning = p => p.ci.state === "PENDING" || p.ci.state === "EXPECTED";
   const humanReviews = p => p.reviews.filter(r => !r.bot);
   // A change-requester who has been asked to look again no longer blocks on the
   // author, so changesBy (needs action) and reReview (waiting) are kept apart.
@@ -196,7 +199,7 @@ function mount(root, opts = {}) {
   // Queued where the base branch has a merge queue, merged otherwise. GitHub
   // still decides: it refuses when checks are missing or the PR conflicts.
   // Row features follow the section the row is drawn in, not the selected tab.
-  const canLand = (p, sid) => sid === "mine" && p.state === "OPEN" && p.approved && !p.queued;
+  const canLand = (p, sid) => sid === "mine" && p.state === "OPEN" && p.approved && !p.queued && !p.autoMerge;
   const canRequest = (p, sid) => sid === "mine" && (p.state === "OPEN" || p.state === "DRAFT");
 
   function reviewCell(p, sid) {
@@ -242,10 +245,17 @@ function mount(root, opts = {}) {
     if (p.conflicting) sub.push(`<span class="warn">conflicts</span>`);
     if (p.queued) sub.push(`<span>${queuePill(p.queued)}</span>`); // wrapped so the "·" separator stays outside the pill
     else if (landErrors.has(p.key)) sub.push(`<span class="warn">${esc(landErrors.get(p.key))}</span>`);
-    else if (canLand(p, sid)) {
+    else if (p.autoMerge) {
+      const busy = landBusy.has(p.key);
+      sub.push(`<span><button class="auto" data-unauto="${esc(p.key)}" ${busy ? "disabled" : ""} title="Auto-merge is on: GitHub merges this once the checks pass. Click to cancel.">${busy ? "Cancelling…" : "auto-merge \u00d7"}</button></span>`);
+    } else if (canLand(p, sid)) {
       const busy = landBusy.has(p.key), sure = confirming === p.key;
-      const label = busy ? (p.mergeQueue ? "Queuing…" : "Merging…") : p.mergeQueue ? "Add to merge queue" : sure ? "Confirm merge" : "Merge";
-      sub.push(`<span><button class="btn small${sure ? " danger" : ""}" data-land="${esc(p.key)}" ${busy ? "disabled" : ""}>${label}</button></span>`);
+      // Checks still running: auto-merge is the useful gesture, a direct merge
+      // would just be refused. Auto-merge can be cancelled; a merge cannot.
+      const auto = !p.mergeQueue && ciRunning(p);
+      const label = busy ? (auto ? "Enabling…" : p.mergeQueue ? "Queuing…" : "Merging…")
+        : auto ? "Auto-merge" : p.mergeQueue ? "Add to merge queue" : sure ? "Confirm merge" : "Merge";
+      sub.push(`<span><button class="btn small${sure ? " danger" : ""}" data-land="${esc(p.key)}" data-mode="${auto ? "auto" : ""}" ${busy ? "disabled" : ""}>${label}</button></span>`);
     }
     // Links already visible in this bundle are noise; show only the rest.
     const ext = p.links.filter(k => !bundleMembers.has(k) && data.prs[k]);
@@ -491,7 +501,7 @@ function mount(root, opts = {}) {
     const queues = land.filter(k => data.prs[k].mergeQueue).length, merges = land.length - queues;
     const sure = confirming === "bulk";
     const landBtn = land.length
-      ? `<button class="btn ${sure ? "danger" : "primary"}" data-bar="land" ${land.some(k => landBusy.has(k)) ? "disabled" : ""} title="Queues where the repository has a merge queue and merges otherwise">${
+      ? `<button class="btn ${sure ? "danger" : "primary"}" data-bar="land" ${land.some(k => landBusy.has(k)) ? "disabled" : ""} title="Queues where the repository has a merge queue, auto-merges those whose checks still run, and merges the rest">${
         sure ? "Confirm: " + [queues && `queue ${queues}`, merges && `merge ${merges}`].filter(Boolean).join(", ") : `Land ${land.length}`}</button>` : "";
     const note = landNote ? `<span>${esc(landNote)}</span><span class="sep">·</span>` : "";
     if (!n) { bar.innerHTML = note.replace(/<span class="sep">.*$/, ""); return; }
@@ -777,14 +787,16 @@ function mount(root, opts = {}) {
     }
   }
 
-  // Queues or merges keys in one request. Successes update the PR and leave the
-  // selection; failures keep their message in landErrors and stay selected.
-  async function land(keys) {
+  // Queues, merges or auto-merges keys in one request; mode is "", "auto" or
+  // "unauto". Successes update the PR and leave the selection; failures keep
+  // their message in landErrors and stay selected.
+  const LAND_NOTE = { queued: "queued", merged: "merged", auto: "auto-merged", unauto: "auto-merge cancelled", failed: "failed" };
+  async function land(keys, mode = "") {
     keys.forEach(k => { landBusy.add(k); landErrors.delete(k); });
     render();
-    const n = { queued: 0, merged: 0, failed: 0 };
+    const n = { queued: 0, merged: 0, auto: 0, unauto: 0, failed: 0 };
     try {
-      const r = await api("/api/land", { method: "POST", body: JSON.stringify({ prs: keys }) });
+      const r = await api("/api/land", { method: "POST", body: JSON.stringify({ prs: keys, mode }) });
       const body = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(body.error || r.statusText);
       body.results.forEach((res, i) => {
@@ -800,12 +812,17 @@ function mount(root, opts = {}) {
     }
     keys.forEach(k => landBusy.delete(k));
     if (keys.length > 1) {
-      landNote = Object.entries(n).filter(([, v]) => v).map(([k, v]) => `${v} ${k}`).join(", ");
+      landNote = Object.entries(n).filter(([, v]) => v).map(([k, v]) => `${v} ${LAND_NOTE[k]}`).join(", ");
       clearTimeout(landNoteTimer);
       landNoteTimer = setTimeout(() => { landNote = ""; render(); }, 6000);
     }
     render();
   }
+
+  // bulkMode picks the request mode for a batch: any PR whose checks still run
+  // wants auto-merge (or the queue), the ready ones merge directly anyway.
+  const bulkMode = keys =>
+    keys.some(k => { const q = data.prs[k]; return q && !q.mergeQueue && ciRunning(q); }) ? "auto" : "";
 
   // Arms a confirm click on id; it lapses after 4 seconds.
   function confirmClick(id) {
@@ -836,13 +853,16 @@ function mount(root, opts = {}) {
     const q = evt(e).closest("[data-land]");
     if (q) {
       const p = data.prs[q.dataset.land];
-      // Queueing can be undone on GitHub; only a merge needs the second click.
-      if (p && (p.mergeQueue || confirmClick(p.key))) land([p.key]);
+      // Queueing and auto-merge can be undone on GitHub; only a merge needs
+      // the second click.
+      if (p && (q.dataset.mode === "auto" || p.mergeQueue || confirmClick(p.key))) land([p.key], q.dataset.mode || "");
       return;
     }
+    const stop = evt(e).closest("[data-unauto]");
+    if (stop) { land([stop.dataset.unauto], "unauto"); return; }
     if (evt(e).closest("[data-bar=land]")) {
       const keys = [...selectedPRs].filter(k => data.prs[k] && canLand(data.prs[k], "mine"));
-      if (keys.length && confirmClick("bulk")) land(keys);
+      if (keys.length && confirmClick("bulk")) land(keys, bulkMode(keys));
       return;
     }
     const bar = evt(e).closest("[data-bar=request]");

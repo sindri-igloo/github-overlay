@@ -59,6 +59,7 @@ type PR struct {
 
 	MergeQueue bool        `json:"mergeQueue"` // the base branch has a merge queue
 	Queued     *queueEntry `json:"queued"`     // null when not in the queue
+	AutoMerge  bool        `json:"autoMerge"`  // GitHub merges it when the requirements pass
 }
 
 type Snapshot struct {
@@ -145,6 +146,7 @@ func convert(r rawPR, bots, repos map[string]bool) *PR {
 	}
 	p.MergeQueue = r.IsMergeQueueEnabled
 	p.Queued = r.MergeQueueEntry
+	p.AutoMerge = r.AutoMergeRequest != nil
 	p.Conflicting = r.Mergeable == "CONFLICTING"
 	if r.ReviewDecision != nil {
 		p.ReviewDecision = *r.ReviewDecision

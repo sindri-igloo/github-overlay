@@ -7,6 +7,7 @@ import (
 	"strings"
 )
 
+// enqueueMutation adds the PR to its base branch's merge queue.
 const enqueueMutation = `
 mutation($id: ID!) {
   enqueuePullRequest(input: {pullRequestId: $id}) {
@@ -14,8 +15,27 @@ mutation($id: ID!) {
   }
 }`
 
-// No commitHeadline or commitBody: the repo's default title and message
-// settings apply.
+// autoMergeMutation turns on GitHub auto-merge: the PR merges as soon as its
+// requirements pass, and it can still be disabled until then. The repository
+// must allow auto-merge; GitHub refuses otherwise and mutate surfaces the
+// message. No commitHeadline or commitBody: the repo's default title and
+// message settings apply.
+const autoMergeMutation = `
+mutation($id: ID!, $method: PullRequestMergeMethod!) {
+  enablePullRequestAutoMerge(input: {pullRequestId: $id, mergeMethod: $method}) {
+    pullRequest { autoMergeRequest { enabledAt } }
+  }
+}`
+
+const unautoMutation = `
+mutation($id: ID!) {
+  disablePullRequestAutoMerge(input: {pullRequestId: $id}) {
+    actor { login }
+  }
+}`
+
+// No commitHeadline or commitBody in mergeMutation either: the repo's default
+// title and message settings apply.
 const mergeMutation = `
 mutation($id: ID!, $method: PullRequestMergeMethod!) {
   mergePullRequest(input: {pullRequestId: $id, mergeMethod: $method}) {
@@ -61,10 +81,40 @@ func (c *client) merge(id, method string) error {
 	return c.mutate(mergeMutation, map[string]any{"id": id, "method": method}, &out)
 }
 
+func (c *client) autoMerge(id, method string) error {
+	var out struct {
+		Enable *struct {
+			PR *struct {
+				Auto *autoMergeReq `json:"autoMergeRequest"`
+			} `json:"pullRequest"`
+		} `json:"enablePullRequestAutoMerge"`
+	}
+	if err := c.mutate(autoMergeMutation, map[string]any{"id": id, "method": method}, &out); err != nil {
+		return err
+	}
+	if out.Enable == nil || out.Enable.PR == nil || out.Enable.PR.Auto == nil {
+		return fmt.Errorf("github: auto-merge was not enabled")
+	}
+	return nil
+}
+
+func (c *client) unauto(id string) error {
+	var out struct {
+		Disable *struct{} `json:"disablePullRequestAutoMerge"`
+	}
+	if err := c.mutate(unautoMutation, map[string]any{"id": id}, &out); err != nil {
+		return err
+	}
+	if out.Disable == nil {
+		return fmt.Errorf("github: auto-merge was not disabled")
+	}
+	return nil
+}
+
 type landResult struct {
 	Key    string `json:"key"`
 	PR     *PR    `json:"pr"`               // null when the request failed or the PR left the snapshot
-	Action string `json:"action,omitempty"` // "queued" or "merged"
+	Action string `json:"action,omitempty"` // "queued", "merged", "auto" or "unauto"
 	Error  string `json:"error,omitempty"`
 }
 
@@ -72,11 +122,17 @@ type landResult struct {
 const maxLand = 50
 
 // handleLand lands many PRs in one request so the page triggers a single
-// refresh: it queues those whose base branch has a merge queue and merges the
-// rest. A failure on one PR lands in its result and does not stop the rest.
+// refresh: it queues those whose base branch has a merge queue and merges or
+// auto-merges the rest. With mode "auto", a PR whose checks are still running
+// gets auto-merge, which merges it when the requirements pass. With mode
+// "unauto" — used to cancel auto-merge from its pill — the reverse. Checks
+// that already pass merge directly instead, so a repository without the
+// auto-merge setting still lands its green PRs. A failure on one PR lands in
+// its result and does not stop the rest.
 func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		PRs []string `json:"prs"`
+		PRs  []string `json:"prs"`
+		Mode string   `json:"mode"` // "", "auto" or "unauto"
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		httpError(w, err, http.StatusBadRequest)
@@ -84,6 +140,10 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 	}
 	if n := len(req.PRs); n == 0 || n > maxLand {
 		httpError(w, fmt.Errorf("prs must hold 1 to %d items, got %d", maxLand, n), http.StatusBadRequest)
+		return
+	}
+	if req.Mode != "" && req.Mode != "auto" && req.Mode != "unauto" {
+		httpError(w, fmt.Errorf("unknown mode %q", req.Mode), http.StatusBadRequest)
 		return
 	}
 
@@ -94,7 +154,7 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 		// The node id lives only in the snapshot, so a PR the page no longer
 		// has can't be landed.
 		var id, method, reason string
-		var queue bool
+		var queue, auto bool
 		s.mu.RLock()
 		if s.snap != nil {
 			if p := s.snap.PRs[strings.ToLower(key)]; p != nil {
@@ -104,6 +164,10 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 				switch {
 				case p.State != "OPEN":
 					reason = "not open"
+				case req.Mode == "unauto":
+					if !p.AutoMerge {
+						reason = "auto-merge isn't on"
+					}
 				case !p.Approved:
 					reason = "not approved"
 				case p.Queued != nil:
@@ -111,6 +175,13 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 				case !strings.EqualFold(p.Author, s.snap.Viewer):
 					reason = "not your pull request"
 				}
+				// With mode "auto", a merge-queue branch queues and a PR with
+				// running checks turns auto-merge on; anything else merges,
+				// whatever the page asked for. Checking the CI state here keeps
+				// green PRs in an auto batch on the direct merge path, which
+				// works even where the auto-merge setting is off.
+				auto = req.Mode == "auto" && !queue &&
+					(p.CI.State == "PENDING" || p.CI.State == "EXPECTED")
 			}
 		}
 		s.mu.RUnlock()
@@ -125,14 +196,23 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// entry stays nil unless a queue took the PR; the snapshot update
+		// later keys off res.Action.
 		var entry *queueEntry
 		var err error
-		if queue {
+		switch {
+		case req.Mode == "unauto":
+			res.Action = "unauto"
+			err = s.client.unauto(id)
+		case queue:
 			res.Action = "queued"
 			entry, err = s.client.enqueue(id)
-		} else if method == "" {
+		case method == "":
 			err = fmt.Errorf("the repository allows no merge method")
-		} else {
+		case auto:
+			res.Action = "auto"
+			err = s.client.autoMerge(id, method)
+		default:
 			res.Action = "merged"
 			err = s.client.merge(id, method)
 		}
@@ -146,10 +226,15 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		if s.snap != nil {
 			if p := s.snap.PRs[strings.ToLower(key)]; p != nil {
-				if queue {
+				switch res.Action {
+				case "queued":
 					p.Queued = entry
-				} else {
+				case "merged":
 					p.State = "MERGED"
+				case "auto":
+					p.AutoMerge = true
+				case "unauto":
+					p.AutoMerge = false
 				}
 				updated := *p
 				res.PR = &updated
