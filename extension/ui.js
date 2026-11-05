@@ -103,6 +103,11 @@ function mount(root, opts = {}) {
   let confirming = null, confirmTimer = 0;
   let tab = store.get("tab", "mine");
   let filter = store.get("filter", "all");
+  // Row order, saved per browser: "opened" holds still between refreshes;
+  // "updated" is search's order, which moves a PR up on every push or comment.
+  const ORDERS = { opened: "Newest opened first", updated: "Recently updated first" };
+  let order = store.get("order", "opened");
+  if (!ORDERS[order]) order = "opened";
   // Two columns, each showing any one section (never the same twice); single
   // mode keeps using `tab`.
   let split = store.get("split", "0") === "1";
@@ -437,10 +442,8 @@ function mount(root, opts = {}) {
 
   // Cards for one section (filterFn applied) as { html, shown }.
   function renderSection(sid, filterFn) {
-    // Search returns most recently updated first, which reshuffles rows on
-    // every push or comment. Order by a time that doesn't move instead:
-    // newest opened first, or newest closed first on the Closed tab.
-    const at = p => (sid === "closed" ? p.closedAt : p.createdAt) || "";
+    // "opened" sorts the Closed tab by when each PR closed, which doesn't move either.
+    const at = p => (order === "updated" ? p.updatedAt : sid === "closed" ? p.closedAt : p.createdAt) || "";
     const shown = section(sid).filter(filterFn)
       .sort((a, b) => at(b).localeCompare(at(a)) || a.key.localeCompare(b.key));
     // Unconnected PRs share one card at the top; each bundle follows in its
@@ -999,6 +1002,11 @@ function mount(root, opts = {}) {
         <span><b>${label}</b><small>${help}</small></span>
       </label>`;
     $("settings").innerHTML = `
+      <h2>Display</h2>
+      <label class="setting model">Order PRs and groups
+        <select data-order>${Object.entries(ORDERS).map(([k, label]) =>
+          `<option value="${k}" ${k === order ? "selected" : ""}>${label}</option>`).join("")}</select>
+      </label>
       <h2>Claude</h2>
       <p class="settings-note">${s.claude
         ? `Off unless you turn it on. Uses your Claude Code login (<code>${esc(s.claude)}</code>) in the background;
@@ -1084,6 +1092,8 @@ function mount(root, opts = {}) {
 
   $("settings-btn").addEventListener("click", toggleSettings);
   $("settings").addEventListener("change", e => {
+    const o = evt(e).closest("[data-order]");
+    if (o) { order = o.value; store.set("order", order); render(); return; }
     const el = evt(e).closest("[data-setting]");
     if (el) saveSettings({ [el.dataset.setting]: el.type === "checkbox" ? el.checked : el.value });
   });
