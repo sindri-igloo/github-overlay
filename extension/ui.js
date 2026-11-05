@@ -437,9 +437,14 @@ function mount(root, opts = {}) {
 
   // Cards for one section (filterFn applied) as { html, shown }.
   function renderSection(sid, filterFn) {
-    const shown = section(sid).filter(filterFn);
+    // Search returns most recently updated first, which reshuffles rows on
+    // every push or comment. Order by a time that doesn't move instead:
+    // newest opened first, or newest closed first on the Closed tab.
+    const at = p => (sid === "closed" ? p.closedAt : p.createdAt) || "";
+    const shown = section(sid).filter(filterFn)
+      .sort((a, b) => at(b).localeCompare(at(a)) || a.key.localeCompare(b.key));
     // Unconnected PRs share one card at the top; each bundle follows in its
-    // own card. Both keep the section's order (most recently updated first).
+    // own card, placed by its newest member. Both keep the order above.
     // Open tabs group by bundle, which can include merged/closed PRs linked to
     // the open ones; those stay folded until asked for. The Closed tab groups
     // closed PRs linked to each other.
