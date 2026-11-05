@@ -38,6 +38,7 @@ header { position: relative; }
   background: var(--bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(1, 4, 9, .2); }
 .settings[hidden] { display: none; }
 .settings h2 { font-size: 14px; margin: 0 0 4px; }
+.settings h2:not(:first-child) { margin-top: 12px; }
 .settings-note { color: var(--fg-muted); font-size: 12px; margin: 0 0 6px; }
 .settings code { font-size: 11px; word-break: break-all; }
 .setting { display: flex; gap: 8px; align-items: flex-start; padding: 5px 0; cursor: pointer; }
