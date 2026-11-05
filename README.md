@@ -26,7 +26,14 @@ ln -s "$(go env GOPATH)/bin/github-overlay" ~/.local/bin/   # if GOPATH/bin isn'
 ```
 
 Requires `gh auth login`. For development, `go install .` from a checkout
-works too.
+works too, or use the Makefile, which builds the checkout before each command:
+
+```sh
+make restart                         # rebuild and restart the background server
+make start ARGS='-closed-days 14'    # pass server flags with ARGS
+make stop / status / open / logs / serve
+make check                           # gofmt, go vet, staticcheck, build and test, as in CI
+```
 
 ## Usage
 
