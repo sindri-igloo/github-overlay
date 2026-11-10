@@ -127,8 +127,10 @@ const maxLand = 50
 // gets auto-merge, which merges it when the requirements pass. With mode
 // "unauto" — used to cancel auto-merge from its pill — the reverse. Checks
 // that already pass merge directly instead, so a repository without the
-// auto-merge setting still lands its green PRs. A failure on one PR lands in
-// its result and does not stop the rest.
+// auto-merge setting still lands its green PRs. On a merge-queue branch a
+// refused enqueue falls back to auto-merge — GitHub's merge-when-ready — so
+// the queue takes the PR once its requirements pass. A failure on one PR
+// lands in its result and does not stop the rest.
 func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		PRs  []string `json:"prs"`
@@ -207,6 +209,17 @@ func (s *server) handleLand(w http.ResponseWriter, r *http.Request) {
 		case queue:
 			res.Action = "queued"
 			entry, err = s.client.enqueue(id)
+			// GitHub only queues a PR that meets every requirement right
+			// now — with checks still running it refuses. GitHub's own
+			// "merge when ready" turns auto-merge on instead, and the queue
+			// takes the PR once the requirements pass. If that fails too
+			// (the repository may ban auto-merge), the queue error is the
+			// one to show.
+			if err != nil && method != "" {
+				if serr := s.client.autoMerge(id, method); serr == nil {
+					res.Action, entry, err = "auto", nil, nil
+				}
+			}
 		case method == "":
 			err = fmt.Errorf("the repository allows no merge method")
 		case auto:

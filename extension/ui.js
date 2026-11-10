@@ -255,11 +255,14 @@ function mount(root, opts = {}) {
       sub.push(`<span><button class="auto" data-unauto="${esc(p.key)}" ${busy ? "disabled" : ""} title="Auto-merge is on: GitHub merges this once the checks pass. Click to cancel.">${busy ? "Cancelling…" : "auto-merge \u00d7"}</button></span>`);
     } else if (canLand(p, sid)) {
       const busy = landBusy.has(p.key), sure = confirming === p.key;
-      // Checks still running: auto-merge is the useful gesture, a direct merge
-      // would just be refused. Auto-merge can be cancelled; a merge cannot.
-      const auto = !p.mergeQueue && ciRunning(p);
-      const label = busy ? (auto ? "Enabling…" : p.mergeQueue ? "Queuing…" : "Merging…")
-        : auto ? "Auto-merge" : p.mergeQueue ? "Add to merge queue" : sure ? "Confirm merge" : "Merge";
+      // Checks still running: a direct merge would just be refused, so the
+      // gesture is auto-merge — "merge when ready" on a merge-queue branch,
+      // where the server queues the PR or readies it until the queue takes
+      // it. Queueing and auto-merge can be cancelled; a merge cannot.
+      const auto = ciRunning(p);
+      const label = busy ? (p.mergeQueue ? "Queuing…" : auto ? "Enabling…" : "Merging…")
+        : p.mergeQueue ? (auto ? "Merge when ready" : "Add to merge queue")
+        : auto ? "Auto-merge" : sure ? "Confirm merge" : "Merge";
       sub.push(`<span><button class="btn small${sure ? " danger" : ""}" data-land="${esc(p.key)}" data-mode="${auto ? "auto" : ""}" ${busy ? "disabled" : ""}>${label}</button></span>`);
     }
     // Links already visible in this bundle are noise; show only the rest.
@@ -509,7 +512,7 @@ function mount(root, opts = {}) {
     const queues = land.filter(k => data.prs[k].mergeQueue).length, merges = land.length - queues;
     const sure = confirming === "bulk";
     const landBtn = land.length
-      ? `<button class="btn ${sure ? "danger" : "primary"}" data-bar="land" ${land.some(k => landBusy.has(k)) ? "disabled" : ""} title="Queues where the repository has a merge queue, auto-merges those whose checks still run, and merges the rest">${
+      ? `<button class="btn ${sure ? "danger" : "primary"}" data-bar="land" ${land.some(k => landBusy.has(k)) ? "disabled" : ""} title="Queues where the repository has a merge queue (readying those whose checks still run), auto-merges the rest that wait on checks, and merges the green ones">${
         sure ? "Confirm: " + [queues && `queue ${queues}`, merges && `merge ${merges}`].filter(Boolean).join(", ") : `Land ${land.length}`}</button>` : "";
     const note = landNote ? `<span>${esc(landNote)}</span><span class="sep">·</span>` : "";
     if (!n) { bar.innerHTML = note.replace(/<span class="sep">.*$/, ""); return; }
@@ -828,9 +831,10 @@ function mount(root, opts = {}) {
   }
 
   // bulkMode picks the request mode for a batch: any PR whose checks still run
-  // wants auto-merge (or the queue), the ready ones merge directly anyway.
+  // wants auto-merge (or the queue's merge-when-ready), the ready ones queue
+  // or merge directly anyway.
   const bulkMode = keys =>
-    keys.some(k => { const q = data.prs[k]; return q && !q.mergeQueue && ciRunning(q); }) ? "auto" : "";
+    keys.some(k => { const q = data.prs[k]; return q && ciRunning(q); }) ? "auto" : "";
 
   // Arms a confirm click on id; it lapses after 4 seconds.
   function confirmClick(id) {
