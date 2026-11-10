@@ -383,6 +383,7 @@ function mount(root, opts = {}) {
     $("meta").textContent =
       data.fetchedAt ? `updated ${ago(data.fetchedAt) === "now" ? "just now" : ago(data.fetchedAt) + " ago"}` : "loading…";
     $("meta").title = `${data.viewer || ""} · ${data.rateRemaining} API points left`;
+    $("refresh").classList.toggle("spin", !!data.refreshing); // fetching from GitHub
     drawClaudeStatus();
 
     const both = splitOn();
@@ -1039,7 +1040,8 @@ function mount(root, opts = {}) {
 
   // What Claude is still doing in the background, as the server reports it:
   // shown next to the update time and under Apply. While it works, the page
-  // polls every 2s instead of 30s, so new groups and titles show as they land.
+  // polls every 2s instead of 30s, so new groups and titles show as they land;
+  // likewise every 1s while the server fetches from GitHub.
   let fastPoll = null;
   let promptApplied = false; // the last Apply went through; say so once Claude is done
   function drawClaudeStatus() {
@@ -1056,7 +1058,7 @@ function mount(root, opts = {}) {
       : c?.error ? `Claude failed: ${c.error}` : promptApplied ? "Applied" : "";
     if (ps) ps.classList.toggle("err", !c?.grouping && !!c?.error);
     clearTimeout(fastPoll);
-    if (busy) fastPoll = setTimeout(() => document.hidden || load(), 2000);
+    if (busy || data.refreshing) fastPoll = setTimeout(() => document.hidden || load(), data.refreshing ? 1000 : 2000);
   }
 
   // Apply is live only when the box differs from what's saved; Reset only
@@ -1233,8 +1235,8 @@ function mount(root, opts = {}) {
 
   render(); // the loading frame, until load() answers
   load();
-  // A hidden tab stops asking, so the server sees nobody looking and stops
-  // polling GitHub; showing it again catches up at once.
+  // A hidden tab stops asking, so the server sees nobody looking and polls
+  // GitHub less often; showing it again catches up at once.
   timers.push(setInterval(() => document.hidden || load(), 30000));
   on(document, "visibilitychange", () => document.hidden || load());
   timers.push(setInterval(render, 30000)); // keep relative times fresh
