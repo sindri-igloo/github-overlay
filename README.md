@@ -7,7 +7,8 @@ and bundles of PRs that reference each other.
 
 It's a single Go binary with the page embedded. It authenticates with your
 `gh` CLI token and polls GitHub's GraphQL API every minute while the page
-is open, pausing when the budget runs low or GitHub rate-limits it.
+is open and every 5 minutes while it's closed, so it opens close to current.
+It pauses when the budget runs low or GitHub rate-limits it.
 
 A refresh costs about 11 of your 5,000 hourly GraphQL points: 3 each for your
 open PRs and your review requests, 1 for recently closed PRs, and about 4 more
@@ -15,8 +16,8 @@ to look up who started the unresolved review threads (skipped when there are
 none). GitHub prices a query by the page sizes it asks for, not by what comes
 back, so the cost barely moves with how many PRs you have. At the default
 `-interval 1m` that is about 660 points an hour (13% of the budget) while the page is visible, and
-nothing from a hidden tab or a closed page. A longer interval lowers it
-proportionally.
+at the default `-idle-interval 5m` about 130 (3%) while it's hidden or closed. Longer intervals
+lower it proportionally; `-idle-interval 0` fetches nothing while the page is closed.
 
 ## Install
 
@@ -54,7 +55,8 @@ Flags for `start`, `restart`, `open` and `serve`:
 | Flag | Default | |
 |---|---|---|
 | `-addr` | `prs.localhost:7777` | listen address; a `*.localhost` name listens on both loopback addresses |
-| `-interval` | `1m` | poll interval while the page is open and visible; nothing is fetched while it's closed or in a background tab |
+| `-interval` | `1m` | poll interval while the page is open and visible |
+| `-idle-interval` | `5m` | poll interval while the page is closed or in a background tab; `0` fetches nothing then |
 | `-closed-days` | `7` | how far back "Recently closed" goes |
 | `-bots` | `igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer` | logins counted as bots, in addition to GitHub App accounts |
 | `-claude` | `claude` | Claude Code CLI for the opt-in Claude features (see below); `''` hides them |

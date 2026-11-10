@@ -14,6 +14,7 @@ import (
 	"os/signal"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -45,10 +46,12 @@ type server struct {
 	mu      sync.RWMutex
 	snap    *Snapshot
 
-	interval    time.Duration
-	fetchedAt   time.Time // last successful fetch
-	pausedUntil time.Time // no fetches before this (rate limited or saving budget)
-	lastView    time.Time // last time the page asked for data
+	interval     time.Duration
+	idleInterval time.Duration // poll interval while nobody is looking; 0 for none
+	fetching     atomic.Bool   // a GitHub fetch is under way
+	fetchedAt    time.Time     // last successful fetch
+	pausedUntil  time.Time     // no fetches before this (rate limited or saving budget)
+	lastView     time.Time     // last time the page asked for data
 }
 
 // lowBudget is the GraphQL points per hour left for gh and other tools: below
@@ -56,7 +59,7 @@ type server struct {
 const lowBudget = 500
 
 // refresh fetches from GitHub unless the data is younger than minAge or
-// fetching is paused. One refresh costs roughly 130 GraphQL points.
+// fetching is paused. One refresh costs about 11 GraphQL points.
 func (s *server) refresh(minAge time.Duration) {
 	s.fetchMu.Lock()
 	defer s.fetchMu.Unlock()
@@ -73,6 +76,8 @@ func (s *server) refresh(minAge time.Duration) {
 		return
 	}
 
+	s.fetching.Store(true)
+	defer s.fetching.Store(false) // runs after the new snapshot is stored
 	res, err := s.client.fetch(s.closedDays)
 	if err != nil {
 		var rl *RateLimitError
@@ -138,15 +143,20 @@ func (s *server) fail(err error, until time.Time) {
 	s.pausedUntil = until
 }
 
-// poll refreshes on the interval, but only while the page is open: the page
-// asks for data every 30s, so a quiet minute means nobody is looking.
+// poll refreshes on the interval while the page is open: the page asks for
+// data every 30s, so a quiet minute means nobody is looking. Then it keeps
+// the data warm at the slower idle interval, so the page opens close to
+// current.
 func (s *server) poll() {
 	for range time.Tick(s.interval) {
 		s.mu.RLock()
 		watched := time.Since(s.lastView) < time.Minute
 		s.mu.RUnlock()
-		if watched {
+		switch {
+		case watched:
 			s.refresh(s.interval / 2)
+		case s.idleInterval > 0:
+			s.refresh(s.idleInterval)
 		}
 	}
 }
@@ -194,13 +204,17 @@ func (s *server) handlePRs(w http.ResponseWriter, r *http.Request) {
 	empty := s.snap == nil
 	stale := time.Since(s.fetchedAt) > s.interval
 	s.mu.Unlock()
+	refreshing := false
 	switch {
 	case empty:
 		s.refresh(0)
 	case r.URL.Query().Get("refresh") == "1":
 		s.refresh(20 * time.Second) // ignore repeated clicks
 	case idle && stale:
-		go s.refresh(s.interval) // page just reopened; it re-polls and gets the result
+		// The page just opened: answer with what we have, and say a refresh
+		// is on its way so the page asks again shortly.
+		refreshing = true
+		go s.refresh(s.interval)
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -214,16 +228,18 @@ func (s *server) handlePRs(w http.ResponseWriter, r *http.Request) {
 		GroupNames  []groupName    `json:"groupNames"`
 		GroupTitles map[int]string `json:"groupTitles"` // by bundle id
 		Claude      *claudeStatus  `json:"claude"`      // null when no Claude feature is on
-	}{s.snap, s.groups.list(), s.groupTitles(), s.claudeStatus()})
+		Refreshing  bool           `json:"refreshing"`  // a fetch is under way; ask again shortly
+	}{s.snap, s.groups.list(), s.groupTitles(), s.claudeStatus(), refreshing || s.fetching.Load()})
 }
 
 type serveOpts struct {
-	addr       string
-	interval   time.Duration
-	closedDays int
-	bots       string
-	claude     string
-	args       []string // the raw flags, recorded in the state file for update
+	addr         string
+	interval     time.Duration
+	idleInterval time.Duration
+	closedDays   int
+	bots         string
+	claude       string
+	args         []string // the raw flags, recorded in the state file for update
 }
 
 // serveFlags registers the server flags on fs. start and serve share them so
@@ -232,6 +248,8 @@ func serveFlags(fs *flag.FlagSet) *serveOpts {
 	o := &serveOpts{}
 	fs.StringVar(&o.addr, "addr", "prs.localhost:7777", "listen address")
 	fs.DurationVar(&o.interval, "interval", time.Minute, "GitHub poll interval while the page is open")
+	fs.DurationVar(&o.idleInterval, "idle-interval", 5*time.Minute,
+		"GitHub poll interval while the page is closed, so it opens current; 0 to fetch only while it's open")
 	fs.IntVar(&o.closedDays, "closed-days", 7, "show PRs merged/closed in the last N days")
 	fs.StringVar(&o.bots, "bots", "igloo-code-reviewer,chatgpt-codex-connector,codex,copilot-pull-request-reviewer",
 		"comma-separated logins to treat as bots (in addition to GitHub App accounts)")
@@ -302,7 +320,8 @@ func serve(o *serveOpts, pidFile bool) error {
 		}
 	}
 	s := &server{client: newClient(), bots: botSet, closedDays: o.closedDays, interval: o.interval,
-		candidates: candidateCache{entries: map[string]cachedCandidates{}}, groups: loadGroups(),
+		idleInterval: o.idleInterval,
+		candidates:   candidateCache{entries: map[string]cachedCandidates{}}, groups: loadGroups(),
 	}
 	s.settings = loadSettings()
 	s.cli = newClaudeCLI(o.claude, func() string { return s.settings.get().ClaudeModel })
